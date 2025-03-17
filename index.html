@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Defender</title><style>
+  body { touch-action:none; position:fixed; overflow:hidden; height:100vh; width:100vw; margin:0; border:0; padding:0; background-color:#000; color:#0ff; font-family:monospace,sans-serif,arial,helvetica; }
+  p { position:absolute; display:inline-block; width:calc(1ch - 1px); height:calc(1ch - 1px); margin:0; border:0;  padding:0; }
+  div { position:absolute; }
+</style></head><body><script>
+const ø=undefined;
+const $ = document.querySelector.bind(document);
+const $$ = document.querySelectorAll.bind(document);
+const PI=Math.PI;
+const PI2=PI*2;
+window.requestIdleCallback ||= (f)=>f();
+String.prototype.atoi = function(){return parseInt(this);}
+String.prototype.atof = function(){return parseFloat(this);}
+Number.prototype.floor = function (){return Math.floor(this);}
+Number.prototype.int = function(){return this|0;}
+Number.prototype.abs = function(){return Math.abs(this);}
+Number.prototype.frac= function(){return this.abs()%1;}
+Number.prototype.mod = function (d){return this-d*(this/d).floor();}
+Number.prototype.cos = function(){return Math.cos(this);}
+Number.prototype.sin = function(){return Math.sin(this);}
+const jiffies=Date.now;
+const l=(v)=>(console.log(v),v);
+var Ok = (o, self=(f)=>(o=f(o)||o, self))=>(self(_=>{self.unwrap=_=>o})) // Monadical framework
+const body = $("body");
+function tick (v, db) {
+  body.insertAdjacentHTML("afterbegin", `<p id=db style="width:100%">0`);
+  db=$("#db");
+  (tick = (v)=>db.innerText=v||db.innerText.atoi()+1)(v);
+}
+
+////
+
+
+var snd = ((filenames)=>{
+  const wac = new AudioContext();
+  const dest = wac.destination;
+  const sched = {}
+  const self = {wac, dest};
+
+  self.slurp = (fn)=>{
+    fetch(fn)
+      .then(resp=>resp.arrayBuffer())
+      .then(ary=>wac.decodeAudioData(ary))
+      .then(aud=>self[fn=fn.split('.')[0]]=aud)
+      .then(aud=>sched[fn]?.(), delete sched[fn]);
+    return self;
+  }
+
+  const source = (name, a={}, dst=dest, delay=0)=>(
+    a.buffer = self[name],
+    a = new AudioBufferSourceNode(wac, a),
+    a.connect(dst),
+    a.start(delay),
+    a
+  );
+
+  self.source = (n, dst, delay) => source(n, {}, dst, delay);
+  self.sourceLoop = (n, dst, delay) => source(n, {loop:true}, dst, delay);
+
+  self.oscillator = (type, frequency, map, dst=dest, at)=>{ // sine square sawtooth triangle custom.
+    const n = new OscillatorNode(wac, {type, frequency});
+    n.connect(dst);
+    n.start(at);
+    map?.(n); // maybe fiddle with the node
+    return n;
+  };
+
+  self.oscillatorSine     = (f, map, dst, at)=>self.oscillator("sine", f, map, dst, at);
+  self.oscillatorSquare   = (f, map, dst, at)=>self.oscillator("square", f, map, dst, at);
+  self.oscillatorSawtooth = (f, map, dst, at)=>self.oscillator("sawtooth", f, map, dst, at);
+
+  self.gain = (g, map, dst=dest)=>(
+    g = new GainNode(wac, g==undefined?undefined:{gain:g}),
+    map?.(g), // maybe fiddle with the node
+    g.connect(dst),
+    g
+  );
+
+  self.lowpass = (q, f, map, dst=dest)=>(
+    f = new BiquadFilterNode(wac, {type:"lowpass", Q:q, frequency:f}),
+    map?.(f, wac.currentTime),
+    f.connect(dst),
+    f
+  );
+
+  self.play = (n, t=0)=>self.source(n, dest, wac.currentTime+t);
+
+  self.map = (n,f)=>self[n]
+    ? self[n].getChannelData(0).forEach(f)
+    : sched[n] = ()=>self.map(n,f);
+
+  self.notes = function (s, onEnded, key=0, at=snd.wac.currentTime, k,d,to){
+    let tempo = 120;
+    const started=at, release=.2;
+    [...s.matchAll(/([<>v^]*)([a-gACDFGrt])([0-9]?)([0-9]?)([0-9]?)/g)].forEach(a=>{
+      if ('t'==a[2]) { tempo = (a[3]+a[4]+a[5]).atoi() || 120; return; }
+      to = at+15*(a[3].atoi() || 4)*(a[4].atoi() || 1)/tempo; // 1/16th base note
+      if ('r'==a[2]) {
+        self.oscillatorSine(0, o=>o.stop(to));
+      } else {
+        key += (12*a[1].length * {'v':-1,'<':-1, '^':1,'>':1}[a[1][0]]||0);
+        k = {'a':0,'A':1,'b':2,'c':3,'C':4,'d':5,'D':6,'e':7,'f':8,'F':9,'g':10,'G':11}[a[2]];
+        7 <= (d = (k-key).mod(12)) && (d = -((key-k).mod(12)));
+        self.oscillatorSawtooth(110*2**((key+=d)/12),
+          (o)=>o.stop(to+release),
+          self.gain(1, (g)=>(
+            g.gain.setValueAtTime(0.2, at),
+            g.gain.linearRampToValueAtTime(0, to+release))),
+          at);
+      }
+      at = to;
+    });
+    onEnded && self.oscillatorSine(0, o=>o.stop(to)).addEventListener("ended", onEnded);
+    return at-started;
+  };
+
+  filenames.forEach(self.slurp);
+
+  self["noise"] = Ok(wac.createBuffer(1, 44100, wac.sampleRate))
+    ((aud)=>{aud.copyToChannel(new Float32Array(44100).map(()=>2*Math.random()-1), 0);})
+    .unwrap();
+
+  return self;
+
+})(["primitive.wav", "trump.wav"]);
+
+
+snd.map("trump", (s,i,a)=>a[i]=.5*s);
+
+
+sfx = async()=>{
+  // background sirens
+  [[400, 1, 180],
+   [300, .9, 190]]
+  .forEach(([freq, sweep, depth])=>
+    snd.oscillatorSine(freq,
+      (osc)=>snd.oscillatorSine(sweep, ø, snd.gain(depth, ø, osc.detune)),
+      snd.gain(.05)));
+
+  // background engines
+  snd.sourceLoop("noise", snd.lowpass(0, 200));
+
+  tune.next();
+};
+
+const soundExplode = ()=>
+  snd.source("noise",
+    snd.gain(.2, ø,
+      snd.lowpass(.001, 2000, (lp, now)=>lp.frequency.linearRampToValueAtTime(0, now+.8))));
+
+// level start melody
+tune = function* () {
+  const song=[
+    "^c1 c1 c2 e2 d2 f2 e1 f1 g1 e1 d2 f2 e1 f1 g1 e1 f1 g1 a1 b1 c2 b2 c4",
+    "a a a  f3 ^c1 a  f3 ^c1 a24",
+    "^e e e  f3 c1 a  f3 ^c1 a24",
+    "^a va ^a  G2 g2 g1 F1 g5  d2 6g7",
+    "^f2 e2 f1 e1 f  c2 f  vf3 ^c1 a  f3 ^c1 a",
+    "t240 a2 a2 a2 ^d F  va2 a2 a2 d F  d2 d2 C2 C2 b2 b2 a",
+    "a2 a2 F1 a1 b2 b  a1 b1 c2 c  b1 c1 b2 g2 g2 a",
+    "t140 ^g2 g2 g2 g2 vc2 c2 a2 ^e2 f2 e2 c c2 c2 c2 e2 f2 e2 d2 d2 c2 c2 g2 ^e2 f2 e2 d",
+  ];
+  while (1) for (notes of song) { snd.notes(notes); yield; }
+}();
+
+
+
+////
+
+const makeSprite = (id, x, y, pixels, colors)=>{
+  colors = Object.fromEntries([...colors.matchAll(/(.)(...) ?/g)].map(e=>e.slice(1)));
+
+  body.insertAdjacentHTML("afterbegin",
+  `<div ${id?"id="+id:""} style="top:${y}%;left:${x}%">`
+  + pixels.map((pixels,i)=>
+      `<div ${i?"hidden":""}>${
+        pixels.flatMap((row,y)=>[...row].map((ch,x)=>
+          ch.trim() && `<p style="left:${x}ch;top:${y}ch;background-color:#${colors[ch]||"fff"}">`))
+        .join('')
+      }</div>`
+    ).join(''));
+
+  return body.firstChild;
+}
+
+async function rp1New () {
+  makeSprite("rp1", 100, 50, [
+  ["**  *** *** **  * *   *** *   *** * * *** **     *    *",
+   "* * *   * * * * * *   * * *   * * * * *   * *   **    *",
+   "**  **  *** * *  *    *** *   ***  *  **  **     *    *",
+   "* * *   * * * *  *    *   *   * *  *  *   * *    *     ",
+   "* * *** * * **   *    *   *** * *  *  *** * *   ***   *"],
+  ], "*eee");
+}
+
+async function pbNew () {
+  const e = makeSprite("pb", 50, 50, [
+  [
+   "  ############  ",
+   " #************# ",
+   "#**************#",
+   "#****@@********#",
+   "#****@.@*******#",
+   "#****@..@******#",
+   "#****@...@*****#",
+   "#****@....@****#",
+   "#****@.....@***#",
+   "#****@....@****#",
+   "#****@...@*****#",
+   "#****@..@******#",
+   "#****@.@*******#",
+   "#****@@********#",
+   "#**************#",
+   " #************# ",
+   "  ############  ",
+  ],
+  [
+   "  ############  ",
+   " #************# ",
+   "#**************#",
+   "#***@@@**@@@***#",
+   "#***@.@**@.@***#",
+   "#***@.@**@.@***#",
+   "#***@.@**@.@***#",
+   "#***@.@**@.@***#",
+   "#***@.@**@.@***#",
+   "#***@.@**@.@***#",
+   "#***@.@**@.@***#",
+   "#***@.@**@.@***#",
+   "#***@.@**@.@***#",
+   "#***@@@**@@@***#",
+   "#**************#",
+   " #************# ",
+   "  ############  ",
+  ],
+  ], "*057 #035 @ccc .fff");
+  e.style.zIndex=1;
+}
+
+async function playerNew () {
+  makeSprite("p1", 0, 50, [
+  ["  **",
+   " ****            ******* ",
+   "r*****              rrrw ",
+   " *mm*****byr       ryyyrw",
+   "r*mmmm*******wg ********wg",
+   "  mmm*wg           ryyyrw",
+   "                    rrrw ",
+   "                 ******* "],
+  ["  **",
+   " ****                    ",
+   "y*****          *******w ",
+   " *mm*****byr       ryyyrw",
+   "y*mmmm*******wg    ryyyrwg",
+   "  mmm*wg        ********w",
+   "                    rrrw ",
+   "                         "],
+  ["  **",
+   " ****                    ",
+   "w*****              rrrw ",
+   " *mm*****byr    ********w",
+   "w*mmmm*******wg    ryyyrwg",
+   "  mmm*wg            rrrrw",
+   "                 ******w ",
+   "                         "]
+  ], '*888 ydd0 b00d rd00 md0d wddd g0d0');
+}
+
+async function trumpNew () {
+  const e = makeSprite(undefined, 50, 50,[
+  ["         hhhhhhhhhh ",
+   "      hhhhhhhhhhh   ",
+   "    hhhhhhhhhhhhh   ",
+   "   hhhhhhhhhhhhh    ",
+   "   hhhhhhhhhhhhh    ",
+   "    h..........h    ",
+   "   ...(-)..(-)...   ",
+   "   ......nn......   ",
+   "    ....nnnn....    ",
+   "     ....rr....     ",
+   "     ...rwwr...     ",
+   "     ...rwwr...     ",
+   "      ...rr...      ",
+   "       ......       ",
+   "                    "],
+  ], '.ea2 (eee )eee -222 nd83 r800 weee hfe4');
+  e.className = "alien";
+  e.hidden = true;
+}
+
+async function ignignoktNew () {
+  const e = makeSprite(undefined, 50, 50, [
+  ["      gg     ggg    ",
+   "      ggg    ggg    ",
+   "      ggg    ggg    ",
+   "    ggggg  ggggg    ",
+   "    gggggggggggg    ",
+   "    gggbggggbggg    ",
+   "    ggbggggggbgg    ",
+   "    gbgbbggbbgbg    ",
+   "    gggggggggggg    ",
+   "    gggggggggggggb  ",
+   "  bgggggbbbbggggg b ",
+   " b gggggggggggggg  b",
+   "b  gggggggggggggg  b",
+   "        b  b         ",
+   "        b  b         ",
+   "      bbb  bbb       "],
+  ["      gg     ggg    ",
+   "      ggg    ggg    ",
+   "      ggg    ggg    ",
+   "    ggggg  ggggg    ",
+   "    gggggggggggg    ",
+   "    gggbggggbggg    ",
+   "    ggbggggggbgg   b",
+   "    gbgbbggbbgbg   b",
+   "b   gggggggggggg  b ",
+   " b  gggggggggggggb  ",
+   "  bgggggbbbbggggg   ",
+   "   gggggggggggggg   ",
+   "   gggggggggggggg   ",
+   "        b  b         ",
+   "        b  b         ",
+   "      bbb  bbb       "]
+  ], 'b00d g0d0');
+  e.className = "alien";
+  e.hidden = true;
+}
+
+async function alienNew () {
+  const e = makeSprite(undefined, 50, 50,[
+  ["   yyy   ",
+   "  gyyyg  ",
+   " ggdggdg ",
+   " ggdggdg ",
+   "  gygyg  ",
+   "  g g g  ",
+   " g  g  g ",
+   "g   g   g"],
+  ["   yyy   ",
+   "  gyyyg  ",
+   " gdggdgg ",
+   " gdggdgg ",
+   "  gygyg  ",
+   " g  g  g ",
+   "  g g g  ",
+   "  g g g  "]
+  ], "rd00 ydd0 g0d0 d444");
+  e.className = "alien";
+  e.hidden = true;
+}
+
+async function aliensNew () {
+  [...Array(4)].forEach(alienNew);
+  trumpNew();
+  [...Array(4)].forEach(alienNew);
+  ignignoktNew();
+}
+
+async function missileNew () {
+  makeSprite("m1", 100, -1, [
+  [" ",
+   " ",
+   " ",
+   " ",
+   "yyyyrr"],
+  ], "ydd0 rd00");
+}
+
+async function starsNew () {
+  document.body.insertAdjacentHTML("afterbegin", `<div id="stars" style="position:unset">` +
+    [...Array(10)].map((_,i)=>
+      `<p class="star" style="top:${100*Math.random()}%;left:${100*Math.random()}%;background-color:#eee">`)
+    .join(''));
+}
+
+////
+
+async function animateReadyMessage () {
+  const e = $("#rp1");
+  if (0 < e.style.top.atof()) {
+    const x = e.style.left.atof();
+    e.style.left = x-2 + "%";
+    return e.style.left.atof() < -70; // return true to signal completion
+  }
+}
+async function animateStars () {
+  $$(".star").forEach(e=>{
+    const x = e.style.left.atof() - Math.sin(PI*e.style.top.atof()) - 1.2;
+    e.style.left = (x<0 ? (e.style.top=100*Math.random()+'%',100) : x) + "%"
+  });
+}
+
+async function animateMissile (m1=$("#m1"), v) {
+  if (0 < m1.style.top.atof()) {
+    m1.style.left = (v=m1.style.left.atof()+5)+"%";
+    100<v && (m1.style.top="0%");
+  }
+}
+
+////
+
+var kounter=0
+var level = 0
+
+async function animateAlien (e1, i) {
+  if (e1.styles) { return }
+
+  if (Math.random()<.1) {
+    let idx = e1.getAttribute("idx") | 0;
+    e1.children[idx].hidden = true;
+    idx = (idx+1) % e1.children.length;
+    e1.children[idx].hidden = false;
+    e1.setAttribute("idx", idx);
+  }
+
+  e1.style.left = 60+30*Math.cos((i*24+kounter)/40+level) + "%";
+  e1.style.top = 50+40*Math.sin((i*24+kounter)/(40-level)) + "%";
+}
+
+var p1idx = 0;
+async function animateAliens () {
+  $$(".alien").forEach(animateAlien)
+  kounter+=1.1;
+
+  if (++p1idx%8 == 0) {
+    e1 = $("#p1"); // animate player
+    let idx = e1.getAttribute("idx") | 0;
+    e1.children[idx].hidden = true;
+    idx = (idx+1) % e1.children.length;
+    e1.children[idx].hidden = false;
+    e1.setAttribute("idx", idx);
+  }
+}
+
+////
+
+async function collissions () {
+  const m1 = $("#m1");
+  $$(".alien").forEach((e1,i)=>{
+    const idx = e1.getAttribute("idx") || 0;
+    if (!e1.styles && (boom ||
+        (Math.abs(m1.offsetLeft-e1.offsetLeft) < 50
+         && Math.abs(m1.offsetTop-e1.offsetTop) < 50))) {
+      e1.styles = [...e1.children[idx].children].map(e=>e.style.cssText); // save pixel locations
+      soundExplode();
+      i == 0 && snd.play("primitive", .1);
+      i == 5 && snd.play("trump", .1);
+    }
+  });
+  boom=0;
+}
+
+async function explode () {
+  const r=50;
+  let allDead=true;
+  $$(".alien").forEach((e1,i)=>{
+    let t, outside=false;
+    if (!e1.style.display) { allDead = false; }
+    if (e1.styles) {
+      allDead = false;
+      const idx = e1.getAttribute("idx") || 0;
+      [...e1.children[idx].children].forEach((e,i)=>{
+        e.style.left = (t=e.style.left.atof() + Math.cos(i))+"ch";
+        (t<-r || r<t) && (outside=true);
+        e.style.top = (t=e.style.top.atof() + Math.sin(i))+"ch";
+        (t<-r || r<t) && (outside=true);
+      })
+      if (outside) {
+        [...e1.children[idx].children].forEach((e,i)=>{
+          e.style = e1.styles[i];
+          e1.style.display="none";
+        });
+        e1.styles = undefined;
+      }
+    }
+  });
+
+  if (allDead) {
+    $$(".alien").forEach((e)=>e.style.display=null);
+    level += 3;
+    tune.next();
+  }
+}
+
+////
+
+
+var workEnd=jiffies();
+var fps = ((last=jiffies(), workeds=[], durations=[])=>
+  async function fps (now=jiffies()) {
+    workeds.push(workEnd-last);
+    durations.push(now-last);
+    last = now;
+    if (51 == durations.length) { workeds.shift(); durations.shift(); }
+    const worked = workeds.reduce((a,b)=>a+b);
+    const elapsed = durations.reduce((a,b)=>a+b);
+    tick( Math.round(durations.length*1000/elapsed) + ' ' + Math.round(100*worked/elapsed) + '%');
+  }
+)();
+
+////
+
+var touchLastY;
+var touchY;
+async function handlersGame () {
+
+ touchY = body.clientHeight/2;
+  const p1 = $("#p1");
+
+  body.addEventListener("touchstart", ()=>{
+    touchLastY = event.changedTouches.item(0).clientY;
+  });
+
+  const shipSlide = (delta) => {
+    touchY += delta;
+    touchY = touchY<0
+      ? 0
+      : body.clientHeight < touchY
+        ? body.clientHeight
+        : touchY;
+    p1.style.top = Math.floor(touchY/10) * 10 + "px";
+  }
+
+  body.addEventListener("touchmove", ()=>{
+    const y = event.changedTouches.item(0).clientY;
+    shipSlide(y-touchLastY);
+    touchLastY = y;
+  });
+
+  body.onmousemove = _=>{
+    p1.style.top=Math.floor(
+      (event.changedTouches?.item(0)||event).clientY/10
+    ) * 10 + "px";
+  };
+
+
+  const m1 = $("#m1");
+  const fire = _=>{
+    m1.style.top = p1.style.top;
+    m1.style.left = "5%";
+    event.preventDefault();
+    //event.stopPropagation();
+  };
+
+  body.onmousedown = fire;
+  body.addEventListener("touchend", fire);
+  body.onkeydown = ()=>{
+    switch (event.key) {
+    case "ArrowUp": shipSlide(-10); break;
+    case "ArrowDown": shipSlide(10); break;
+    case "Escape": case "Backspace": power=power?0:snd.wac.resume(),gameLoop(),snd.wac.suspend(),1; break;
+    case "*": boom=1;break;
+    default: fire(); break;
+    }
+  }
+}
+
+////
+
+var boom=0;
+var power=1;
+var state=0;
+const exit = (msg="the end")=>{throw msg}
+
+const gameStateMachine={
+ 0: ()=>animateAliens()
+    .then(animateMissile)
+    .then(animateReadyMessage)
+    .then((isdone)=>(snd.wac.resume(), state=isdone?1:0)),
+ 1: ()=>(
+    $$(".alien").forEach(e=>e.hidden=0),
+    $("#rp1").hidden=1,
+    state=2),
+ 2: ()=>animateMissile()
+    .then(collissions)
+    .then(explode)
+    .then(animateAliens)
+};
+
+async function gameLoop (t) {
+  fps()
+  .then(animateStars)
+  .then(gameStateMachine[state])
+  //.then(()=>new Promise(r=>setTimeout(r,50)))
+  //.then(()=>{workEnd=jiffies(); power&&setTimeout(gameLoop, 0);})
+  .then(()=>(workEnd=jiffies(),power&&requestAnimationFrame(gameLoop)))
+  .catch(l)
+}
+
+gameStart = async () => {
+  rp1New()
+  .then(playerNew)
+  .then(aliensNew)
+  .then(missileNew)
+  .then(starsNew)
+  .then(handlersGame)
+  .then(sfx)
+  .then(_=>requestIdleCallback(gameLoop))
+  .catch(l)
+}
+
+let playing=0, song;
+
+async function jukebox (t) {
+  fps()
+  .then(animateStars)
+  .then(()=>{
+    playing ||= snd.notes(song, ()=>playing=0);
+    requestAnimationFrame(jukebox);
+    workEnd = jiffies();
+  })
+  .catch(l)
+}
+
+async function handlersJukebox () {
+  [...$("#pb").children].map((e,i)=>e.hidden=i==0+('suspended'==snd.wac.state));
+  body.onkeydown = body.onmousedown = ()=>{
+    [...$("#pb").children].map((e,i)=>e.hidden=i==0+('suspended'!=snd.wac.state));
+    snd.wac.state=="suspended" ? snd.wac.resume() : snd.wac.suspend();
+  };
+}
+
+jukeboxStart = async()=>
+  starsNew()
+  .then(pbNew)
+  .then(handlersJukebox)
+  .then(jukebox)
+  .catch(l);
+
+Ok(decodeURI(location.search))
+  (s=>(song=s)?jukeboxStart():gameStart())
+
+</script></body></html>
