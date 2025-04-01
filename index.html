@@ -1053,6 +1053,6 @@ async function gameCabinet () {
 
 Ok(decodeURI(location.search).slice(1))
 ((queryString)=>(
-  {'1':gameCabinet, '2':gameDom, '':gameCanvas}[(song=queryString)]||jukeboxStart)())
+  {'1':gameCabinet, '2':gameCanvas, '':gameDom}[(song=queryString)]||jukeboxStart)())
 
 </script></body></html>
