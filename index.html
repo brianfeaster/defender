@@ -3,8 +3,8 @@
   body { image-rendering:pixelated; overflow:hidden; touch-action:none; position:fixed; width:100vw; height:100vh; margin:0; border:0; padding:0; background-color:#000; color:#0ff; font-family:monospace,sans-serif,arial,helvetica; }
   p { position:absolute; display:inline-block; width:calc(1ch - 1px); height:calc(1ch - 1px); margin:0; border:0;  padding:0; }
   div { position:absolute; }
-  canvas { margin:0; border:0; padding:0; }
-</style></head><body><script>
+  canvas { position:absolute; margin:0; border:0; padding:0; }
+</style></head><body><canvas><script>
 const ø=undefined;
 const $ = document.querySelector.bind(document);
 const $$ = document.querySelectorAll.bind(document);
@@ -24,12 +24,19 @@ Number.prototype.sin = function(){return Math.sin(this);}
 const jiffies=Date.now;
 const rnd=i=>i*Math.random()|0;
 const min=Math.min.bind(Math);
+const max=Math.max.bind(Math);
 const l=(v)=>(console.log(v),v);
 var Ok = (o, self=(f)=>(o=f(o)||o, self))=>(self(_=>{self.unwrap=_=>o})) // Monadical framework
+const exit = (msg="the end")=>{throw msg}
+
 const body = $("body");
-var canvas;
+const canvas = $('canvas');
+const c2d = canvas.getContext('2d');
+
+////
+
 function tick (v, db) {
-  body.insertAdjacentHTML("afterbegin", `<p id=db style="width:100%">0`);
+  body.insertAdjacentHTML("beforeend", `<p id=db style="width:100%">0`);
   db=$("#db");
   (tick = (v)=>db.innerText=v||db.innerText.atoi()+1)(v);
 }
@@ -156,11 +163,13 @@ const soundExplode = ()=>
 // level start melody
 tune = function* () {
   const song=[
-    "^c1 c1 c2 e2 d2 f2 e1 f1 g1 e1 d2 f2 e1 f1 g1 e1 f1 g1 a1 b1 c2 b2 c4",
+    "t140^c1 c1 c2 e2 d2 f2 e1 f1 g1 e1 d2 f2 e1 f1 g1 e1 f1 g1 a1 b1 c2 b2 c4",
     "t190 c6 b2 c6  b2 c2 g2 c2 e2  g8",
     "t220 ^c2 a2 fff2g2a2A2 ccca",
     "t140^^aA2vA2^g2A2c2vc2^a2A2vA2^g2A2d2D2vD2^d2c2A",
     "t180 ^^a3a1Favd8 eF8 a3a1FaC8 de8",
+    "t300^cdef7cD9A8C8Gc82^f4f2f2g4fAf8c2e2f4",
+    "t180^^f1g1G1c1f9Gg2D9Gg2vC9^Gg2vG8",
     "a a a  f3 ^c1 a  f3 ^c1 a24",
     "^e e e  f3 c1 a  f3 ^c1 a24",
     "^a va ^a  G2 g2 g1 F1 g5  d2 6g7",
@@ -174,16 +183,37 @@ tune = function* () {
 
 ////
 
+var bytes = [];
 var sprites = {};
 
 var renderSprite = (id) => {
+  const z = canvas.pixelSize;
+  const zz = canvas.pixelWidth;
   const s = sprites[id]
   if (!s) { return; }
-  const {x,y,pixels,center} = s;
+  const {x,y,w,h,pixels,center} = s;
   //const k=(mouse.x-x-center.x).abs()<4 && (mouse.y-y-center.y).abs()<4;
-  pixels[0]
-    .forEach((row,yy)=>row
-      .forEach((c,xx)=>c&&box(xx+x, yy+y, /*k||(xx==center.x&&yy==center.y)?'#fff':*/c)));
+
+  if (!s.image) {
+    s.image = new Image(w*z, h*z);
+
+    const cnvs = document.createElement('canvas');
+    cnvs.width = s.image.width;
+    cnvs.height = s.image.height;
+
+    const ctx = cnvs.getContext('2d');
+    pixels[0]
+      .forEach((row,yy)=>row
+        .forEach((c,xx)=>(ctx.fillStyle=c) && ctx.fillRect(xx*z, yy*z, zz, zz)));
+
+    s.image.src = cnvs.toDataURL('image/png');
+  }
+
+  c2d.drawImage(s.image, x*z|0, y*z|0);
+
+  //pixels[0] // plot each pixel directly ++expensive;
+  //  .forEach((row,yy)=>row
+  //    .forEach((c,xx)=>c&&box(xx+x, yy+y, /*k||(xx==center.x&&yy==center.y)?'#fff':*/c)));
 }
 
 var renderSpriteMod = (id, actor) => {
@@ -191,26 +221,23 @@ var renderSpriteMod = (id, actor) => {
   var i=0;
   pixels[0]
     .forEach((row,yy)=>row
-      .forEach((c,xx)=>c&&box(xx+x+(i+=.5).cos()*actor.exploding, yy+y+i.sin()*actor.exploding, c)));
+      .forEach((c,xx)=>c&&box(xx+x+(i+=.5).cos()*actor.exploding|0, yy+y+i.sin()*actor.exploding|0, c)));
   actor.exploding++;
 }
 
 var renderSprites = (ids) => {
   (ids||keys(sprites)).forEach(renderSprite)
-  /*if (mouse.x || mouse.y) {
-    box(mouse.x, mouse.y, '#f00');
-  }*/
 }
 
 const makeSprite2 = (id, x, y, pixels, colors)=>{
   colors = Object.fromEntries([...colors.matchAll(/(.)(...) ?/g)].map(e=>e.slice(1)));
-  var xs=0, ys=0, ps=0; 
-
+  var w=0, h=0, xs=0, ys=0, ps=0;
   pixels = pixels.map((pixels,i)=>pixels
-      .map((row,y)=>[...row]
-        .map((ch,x)=>(ps++,xs+=x,ys+=y,colors[ch]?'#'+colors[ch]:undefined))));
-
-  return sprites[id] = {x, y, hidden:false, pixels, center:{x:xs/ps|0, y:ys/ps|0}};
+    .map((row,y)=>[...row]
+      .map((ch,x)=>(ps++,xs+=x,ys+=y,colors[ch]
+        ? ( h<y&&(h=y), w<x&&(w=x), '#'+colors[ch])
+        : undefined))));
+  return sprites[id] = {x, y, w:w+1, h:h+1, hidden:false, pixels, center:{x:xs/ps|0, y:ys/ps|0}};
 }
 
 const makeSprite3 = (id, w, h, data)=>{
@@ -514,7 +541,7 @@ async function animateReadyMessage (state=0) {
   case 1:
     e = sprites['rp1'];
     if (0 < e.y) {
-      e.x -= 1;
+      e.x -= 2;
       return e.x < -70; // return true to signal completion
     }
     break;
@@ -535,7 +562,7 @@ async function animateStars (s=0) {
     stars.forEach(({x,y},i)=>{
       const t = x - Math.sin(PI*y) - 1.2;
       stars[i].x = (x<0 ? (stars[i].y=100*Math.random(), 100) : t);
-      box(stars[i].x, stars[i].y, "#ccf");
+      box(stars[i].x|0, stars[i].y|0, "#ccf");
     });
     break;
   }
@@ -567,7 +594,6 @@ async function animateAlien (s, e1, i) {
   switch(s) {
   case 0:
     if (e1.styles) { return }
-
     if (Math.random()<.1) {
       let idx = e1.getAttribute("idx") | 0;
       e1.children[idx].hidden = true;
@@ -700,6 +726,7 @@ async function explode () {
 
 
 var workEnd=jiffies();
+
 var fps = ((last=jiffies(), workeds=[], durations=[])=>
   async function fps (now=jiffies()) {
     workeds.push(workEnd-last);
@@ -708,15 +735,75 @@ var fps = ((last=jiffies(), workeds=[], durations=[])=>
     if (51 == durations.length) { workeds.shift(); durations.shift(); }
     const worked = workeds.reduce((a,b)=>a+b);
     const elapsed = durations.reduce((a,b)=>a+b);
-    //tick(`${Math.round(durations.length*1000/elapsed)} ${Math.round(100*worked/elapsed)}% ${body.clientWidth}x${body.clientHeight}  ${canvas.clientWidth}x${canvas.clientHeight}  ${Math.min( (canvas.clientWidth/100)|0, (canvas.clientHeight/100)|0 )} `);
     tick(`${Math.round(durations.length*1000/elapsed)} ${Math.round(100*worked/elapsed)}%`);
   }
 )();
 
+///////
+
+function loadImageAsSprite (fn) {
+  const img = new Image();
+  img.src=fn;
+  img.onload = r=>{
+    const cnvs = document.createElement('canvas');
+    cnvs.width = img.width;
+    cnvs.height = img.height;
+    const ctx = cnvs.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    makeSprite3(fn.split('.')[0], img.width, img.height,
+        ctx.getImageData(0, 0, img.width, img.height).data);
+  }
+}
+
+function renderBottom () {
+  const s = sprites['rtypebottom'];
+  if (!s) { return; }
+  const k = (kounter/8)%(s.w+0);
+  const r = s.w+0-k;
+  s.x=-k; s.y=100-(s.h+0);
+  renderSprite('rtypebottom');
+  if (r<100) {
+    s.x=r;
+    renderSprite('rtypebottom');
+  }
+
+  c2d.transform(1,0,0,-1,0,0);
+
+  s.x=-k; s.y=-s.h;
+  renderSprite('rtypebottom');
+  if (r<100) {
+    s.x=r;
+    renderSprite('rtypebottom');
+  }
+
+  c2d.transform(1,0,0,-1,0,0);
+}
+
+const clear = ()=>{
+  const w=body.clientWidth
+  const h=body.clientHeight;
+  if (canvas.bodyWidth!=w || canvas.bodyHeight != h) {
+    canvas.bodyWidth = w;
+    canvas.bodyHeight = h;
+    const s = max(min((w*.01|0)*100, (h*.01|0)*100), 100);
+    if (canvas.width != s) {
+      canvas.width = canvas.height = s;
+      canvas.pixelSize = s*.01|0;
+      canvas.pixelWidth = max(canvas.pixelSize-1, 1);
+    }
+  }
+  c2d.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+const box = (x, y, c, s=canvas.pixelSize, w=canvas.pixelWidth)=>{
+  c2d.fillStyle = c;
+  c2d.fillRect(x*s, y*s, w, w);
+}
+
 ////
 
-var touchLastY;
-var touchY;
+var touchLastY, touchY;
+
 async function handlersGame () {
 
   touchY = body.clientHeight/2;
@@ -762,19 +849,16 @@ async function handlersGame () {
     switch (event.key) {
     case "ArrowUp": shipSlide(-10); break;
     case "ArrowDown": shipSlide(10); break;
-    case "Escape": case "Backspace": power=power?0:snd.wac.resume(),gameLoop(),snd.wac.suspend(),1; break;
+    case "Escape": case "Backspace": power=power?0:snd.wac.resume(),gameDomLoop(),snd.wac.suspend(),1; break;
     case "*": boom=1;break;
     default: fire(); break;
     }
   }
 }
 
-////
-
 var boom=0;
 var power=1;
 var state=0;
-const exit = (msg="the end")=>{throw msg}
 
 const gameStateMachine={
  0: ()=>animateAliens()
@@ -791,86 +875,39 @@ const gameStateMachine={
     .then(animateAliens)
 };
 
-async function gameLoop (t) {
+async function gameDomLoop (t) {
   fps()
   .then(animateStars)
+  .then(()=>kounter+=1.1)
   .then(gameStateMachine[state])
   //.then(()=>new Promise(r=>setTimeout(r,50)))
-  //.then(()=>{workEnd=jiffies(); power&&setTimeout(gameLoop, 0);})
-  .then(()=>(workEnd=jiffies(),power&&requestAnimationFrame(gameLoop)))
+  //.then(()=>{workEnd=jiffies(); power&&setTimeout(gameDomLoop, 0);})
+  .then(()=>(workEnd=jiffies(),power&&requestAnimationFrame(gameDomLoop)))
   .catch(l)
 }
 
-///////
-
-var game4 = async () => {
-  switch (state) { case 0:
-    body.insertAdjacentHTML("afterbegin", "<canvas style='border:solid 1px white'>");
-    canvas = $("canvas");
-    c2d = canvas.getContext('2d');
-    clear();
-    body.onresize = clear;
-    body.onkeydown = ()=>{
-      switch (event.key) { case "Escape": case "Backspace": power=!power; break; }
-    }
-    state=1;
-    requestAnimationFrame(game4);
-  break; case 1:
-    c2d.fillStyle = "#ffffff";
-    [...Array(100)].forEach(_=>
-      box(rnd(100), rnd(100), '#'+('00'+(Math.random()*16*16*16).toFixed()).slice(-3)));
-    power && requestAnimationFrame(game4);
-  break; }
+const gameDom = async ()=>{
+  rp1New()
+  .then(playerNew)
+  .then(aliensNew)
+  .then(missileNew)
+  .then(starsNew)
+  .then(handlersGame)
+  .then(sfx)
+  .then(_=>requestIdleCallback(gameDomLoop))
+  .catch(l)
 }
 
-function loadImageAsSprite (fn) {
-  const img = new Image();
-  img.src=fn;
-  img.onload = r=>{
-    const canvas = document.createElement('canvas'); 
-    canvas.width = img.width; 
-    canvas.height = img.height; 
-    const ctx = canvas.getContext('2d'); 
-    ctx.drawImage(img, 0, 0); 
-    makeSprite3(fn.split('.')[0], img.width, img.height,
-        ctx.getImageData(0, 0, img.width, img.height).data);
-  }
-}
+////
 
-function renderBottom () {
-  const s = sprites['rtypebottom'];
-  if (!s) { return; }
-  const k = (kounter/8)%(s.w+0);
-  const r = s.w+0-k;
-  s.x=-k; s.y=100-(s.h+0);
-  renderSprite('rtypebottom'); 
-  if (r<100) {
-    s.x=r;
-    renderSprite('rtypebottom'); 
-  }
+//var mouse = {x:0, y:0};
 
-  c2d.transform(1,0,0,-1,0,0);
-
-  s.x=-k; s.y=-s.h;
-  renderSprite('rtypebottom'); 
-  if (r<100) {
-    s.x=r;
-    renderSprite('rtypebottom'); 
-   }
-
-  c2d.transform(1,0,0,-1,0,0);
-}
-
-var mouse = {x:0, y:0};
-var game3 = async () => {
+var gameCanvas = async () => {
   switch (state) {
   case 0:
     body.onkeydown = ()=>{
       switch (event.key) { case "Escape": case "Backspace": power=!power; break; }
     }
-    body.insertAdjacentHTML("afterbegin", "<canvas>");
-    canvas = $('canvas');
-    c2d = $("canvas").getContext('2d');
     await rp1New(1)
       .then(()=>playerNew(1))
       .then(()=>aliensNew(1))
@@ -906,7 +943,7 @@ var game3 = async () => {
       switch (event.key) {
       case "ArrowUp": shipSlide(-10); break;
       case "ArrowDown": shipSlide(10); break;
-      case "Escape": case "Backspace": power=power?0:snd.wac.resume(),game3(),snd.wac.suspend(),1; break;
+      case "Escape": case "Backspace": power=power?0:snd.wac.resume(),gameCanvas(),snd.wac.suspend(),1; break;
       case "*": boom=1;break;
       default: fire(); break;
       }
@@ -924,7 +961,7 @@ var game3 = async () => {
       /body.clientHeight).floor();
     };
     state=1;
-    game3();
+    gameCanvas();
     sfx()
     break;
   case 1:
@@ -937,7 +974,7 @@ var game3 = async () => {
     .then(()=>renderSprites(['m1','p1','rp1']))
     .then(()=>animateReadyMessage(1))
     .then((isdone)=>(snd.wac.resume(), isdone&&(state=2)))
-    .then(()=>(workEnd=jiffies(), power&&requestAnimationFrame(game3)))
+    .then(()=>(workEnd=jiffies(), power&&requestAnimationFrame(gameCanvas)))
     break;
   case 2:
     fps()
@@ -949,108 +986,20 @@ var game3 = async () => {
     .then(()=>collissions(1))
     .then(()=>animateAliens(1))
     .then(()=>renderSprites(['m1','p1']))
-    .then(()=>(workEnd=jiffies(), power&&requestAnimationFrame(game3)))
+    .then(()=>(workEnd=jiffies(), power&&requestAnimationFrame(gameCanvas)))
     break;
   }
 }
 
-var game2 = async () => {
-  switch (state) {
-  case 0:
-    body.onkeydown = ()=>{
-      switch (event.key) { case "Escape": case "Backspace": power=!power; break; }
-    }
-    body.insertAdjacentHTML("afterbegin", "<canvas width='100' height='100' style='position:absolute; left:186px; top:168px; border:0'>");
-    canvas = $("canvas");
-    c2d = canvas.getContext('2d');
-    body.insertAdjacentHTML("afterbegin", '<img src="pongCabinetTop.png">');
-    await rp1New(1)
-      .then(()=>playerNew(1))
-      .then(()=>aliensNew(1))
-      .then(()=>missileNew(1));
-    body.addEventListener("touchstart", ()=>{
-      touchLastY = event.changedTouches.item(0).clientY;
-    });
-    var touchY = body.clientHeight/2;
-    const shipSlide = (delta) => {
-      touchY += delta;
-      touchY = touchY<0
-        ? 0
-        : 100 < touchY
-          ? 100
-          : touchY;
-        sprites['p1'].y = Math.floor(touchY/10) * 10;
-    }
-    body.addEventListener("touchmove", ()=>{
-      const y = event.changedTouches.item(0).clientY;
-      shipSlide(y-touchLastY);
-      touchLastY = y;
-    });
-    const fire = _=>{
-      sprites['m1'].y = sprites['p1'].y;
-      sprites['m1'].x = 5;
-      event.preventDefault();
-      //event.stopPropagation();
-    };
-    body.onmousedown = fire;
-    body.addEventListener("touchend", fire);
-    body.onkeydown = ()=>{
-      switch (event.key) {
-      case "ArrowUp": shipSlide(-10); break;
-      case "ArrowDown": shipSlide(10); break;
-      case "Escape": case "Backspace": power=power?0:snd.wac.resume(),game2(),snd.wac.suspend(),1; break;
-      case "*": boom=1;break;
-      default: fire(); break;
-      }
-    }
-    body.onmousemove = _=>{
-      sprites['p1'].y=Math.floor(
-        (event.changedTouches?.item(0)||event).screenY/10) * 1;
-    };
-    state=1;
-    game2();
-    break;
-  case 1:
-    fps()
-    .then(clearOnly)
-    .then(()=>animateMissile(1))
-    .then(()=>animateStars(1))
-    .then(()=>renderSprites())
-    .then(()=>animateReadyMessage(1))
-    .then((isdone)=>(snd.wac.resume(), isdone&&(state=2)))
-    .then(()=>(workEnd=jiffies(), power&&requestAnimationFrame(game2)))
-    break;
-  case 2:
-    fps()
-    .then(clearOnly)
-    .then(()=>animateMissile(1))
-    .then(()=>animateStars(1))
-    .then(()=>animateAliens(1))
-    .then(()=>renderSprites())
-    .then(()=>(workEnd=jiffies(), power&&requestAnimationFrame(game2)))
-    break;
-  }
-}
+////
 
-gameStart = async ()=>{
-  rp1New()
-  .then(playerNew)
-  .then(aliensNew)
-  .then(missileNew)
-  .then(starsNew)
-  .then(handlersGame)
-  .then(sfx)
-  .then(_=>requestIdleCallback(gameLoop))
-  .catch(l)
-}
-
-let playing=0, song;
+let isPlaying=0, song;
 
 async function jukebox (t) {
   fps()
   .then(animateStars)
   .then(()=>{
-    playing ||= snd.notes(song, ()=>playing=0);
+    isPlaying ||= snd.notes(song, ()=>isPlaying=0);
     requestAnimationFrame(jukebox);
     workEnd = jiffies();
   })
@@ -1065,7 +1014,7 @@ async function handlersJukebox () {
   };
 }
 
-jukeboxStart = async()=> {
+const jukeboxStart = async()=> {
   starsNew()
   .then(pbNew)
   .then(handlersJukebox)
@@ -1075,48 +1024,35 @@ jukeboxStart = async()=> {
 
 ////
 
-const clearOnly = ()=>{ c2d.clearRect(0,0,canvas.width,canvas.height); }
-
-const clear = ()=>{
-  const w = Math.min( ((body.clientWidth/100)|0)*100, ((body.clientHeight/100)|0)*100 );
-  canvas.width = canvas.height = w;
-  c2d.fillStyle = "#000000";
-  //c2d.fillRect(0,0,100,100);
-  c2d.clearRect(0,0,1000,1000);
-}
-
-const box = (x, y, c, s=5, w=4)=>{
-  s = Math.min( (canvas.clientWidth/100)|0, (canvas.clientHeight/100)|0 );
-  w = Math.max(s-1, 1);
-  c2d.fillStyle = c;
-  c2d.fillRect(x*s|0,   y*s|0,   w, w);
-}
-
-
-loc=0;
-state=0;
-async function demo () {
+async function gameCabinet () {
   switch (state) { case 0:
     body.insertAdjacentHTML("afterbegin", '<img src="pongCabinetTop.png">');
-    body.insertAdjacentHTML("afterbegin", "<canvas width='100' height='100'>");
-    c2d = $("canvas").getContext('2d');
+    canvas.width = canvas.height = 100;
+    canvas.style.left = "188px";
+    canvas.style.top = "168px";
     body.onkeydown = ()=>{
-      switch (event.key) { case "Escape": case "Backspace": power=!power; break; }
+      switch (event.key) { case "Escape": case "Backspace": (power=!power) && gameCabinet(); break; }
     }
     state=1;
-    requestAnimationFrame(demo);
+    requestAnimationFrame(gameCabinet);
   break; case 1:
-    clear();
-    c2d.fillStyle = "#ffffff";
-    [...Array(20)].forEach((_,i)=>box(50+(loc+i*.17).cos()*50, 50+50*(loc*.9+i*.19).sin(), loc+=1*i.sin()));
-    power && requestAnimationFrame(demo);
+    //clear();
+    [...Array(100)].forEach(_=>
+      box(rnd(100),
+      rnd(100),
+      '#'+('00'+(Math.random()*16*16*16).toFixed()).slice(-3), 1, 2));
+    [...Array(20)].forEach((_,i)=>box(
+      50+(kounter+i*.17).cos()*50,
+      50+50*(kounter*.9+i*.19).sin(),
+      "#0f0", 1, 2, kounter+=1*i.sin()));
+    power && requestAnimationFrame(gameCabinet);
   break; }
 }
 
 ////
 
 Ok(decodeURI(location.search).slice(1))
-  (s=>({'.':demo, '4':game4, '3':gameStart, '2':game2, '':game3}[(song=s)]||jukeboxStart)())
+((queryString)=>(
+  {'1':gameCabinet, '2':gameDom, '':gameCanvas}[(song=queryString)]||jukeboxStart)())
 
-</script>
-</body></html>
+</script></body></html>
