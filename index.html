@@ -5,6 +5,7 @@
   div { position:absolute; }
   canvas { position:absolute; margin:0; border:0; padding:0; }
 </style></head><body><canvas><script>
+"use strict"
 const ø=undefined;
 const $ = document.querySelector.bind(document);
 const $$ = document.querySelectorAll.bind(document);
@@ -22,11 +23,11 @@ Number.prototype.mod = function (d){return this-d*(this/d).floor();}
 Number.prototype.cos = function(){return Math.cos(this);}
 Number.prototype.sin = function(){return Math.sin(this);}
 const jiffies=Date.now;
-const rnd=i=>i*Math.random()|0;
+const rnd=(m,s=0)=>(m*Math.random()+s)|0;
 const min=Math.min.bind(Math);
 const max=Math.max.bind(Math);
 const l=(v)=>(console.log(v),v);
-var Ok = (o, self=(f)=>(o=f(o)||o, self))=>(self(_=>{self.unwrap=_=>o})) // Monadical framework
+const Ok = (o, self=(f)=>(o=f(o)||o, self))=>(self(_=>{self.unwrap=_=>o})) // Monadical framework
 const exit = (msg="the end")=>{throw msg}
 
 const body = $("body");
@@ -35,10 +36,33 @@ const c2d = canvas.getContext('2d');
 
 ////
 
-function tick (v, db) {
+function db (v, el) {
   body.insertAdjacentHTML("beforeend", `<p id=db style="width:100%">0`);
-  db=$("#db");
-  (tick = (v)=>db.innerText=v||db.innerText.atoi()+1)(v);
+  el=$("#db");
+  (db = (v)=>el.innerText=v||el.innerText.atoi()+1)(v);
+}
+
+////
+
+const clear = ()=>{
+  const w=body.clientWidth
+  const h=body.clientHeight;
+  if (canvas.bodyWidth!=w || canvas.bodyHeight != h) {
+    canvas.bodyWidth = w;
+    canvas.bodyHeight = h;
+    const s = max(min((w*.01|0)*100, (h*.01|0)*100), 100);
+    if (canvas.width != s) {
+      canvas.width = canvas.height = s;
+      canvas.pixelSize = s*.01|0;
+      canvas.pixelWidth = max(canvas.pixelSize-1, 1);
+    }
+  }
+  c2d.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+const box = (x, y, c, s=canvas.pixelSize, w=canvas.pixelWidth)=>{
+  c2d.fillStyle = c;
+  c2d.fillRect(x*s, y*s, w, w);
 }
 
 ////
@@ -129,7 +153,7 @@ var snd = ((filenames)=>{
   filenames.forEach(self.slurp);
 
   self["noise"] = Ok(wac.createBuffer(1, 44100, wac.sampleRate))
-    ((aud)=>{aud.copyToChannel(new Float32Array(44100).map(()=>2*Math.random()-1), 0);})
+    ((aud)=>{aud.copyToChannel(new Float32Array(44100).map(()=>rnd(2)-1), 0);})
     .unwrap();
 
   return self;
@@ -140,7 +164,7 @@ var snd = ((filenames)=>{
 snd.map("trump", (s,i,a)=>a[i]=.5*s);
 
 
-sfx = async()=>{
+const sfx = async()=>{
   // background sirens
   [[400, 1, 180],
    [300, .9, 190]]
@@ -161,7 +185,7 @@ const soundExplode = ()=>
       snd.lowpass(.001, 2000, (lp, now)=>lp.frequency.linearRampToValueAtTime(0, now+.8))));
 
 // level start melody
-tune = function* () {
+const tune = function* () {
   const song=[
     "t140^c1 c1 c2 e2 d2 f2 e1 f1 g1 e1 d2 f2 e1 f1 g1 e1 f1 g1 a1 b1 c2 b2 c4",
     "t190 c6 b2 c6  b2 c2 g2 c2 e2  g8",
@@ -178,85 +202,92 @@ tune = function* () {
     "a2 a2 F1 a1 b2 b  a1 b1 c2 c  b1 c1 b2 g2 g2 a",
     "t140 ^g2 g2 g2 g2 vc2 c2 a2 ^e2 f2 e2 c c2 c2 c2 e2 f2 e2 d2 d2 c2 c2 g2 ^e2 f2 e2 d",
   ];
-  while (1) for (notes of song) { snd.notes(notes); yield; }
+  while (1) for (let notes of song) { snd.notes(notes); yield; }
 }();
 
 ////
 
-var bytes = [];
-var sprites = {};
+var blocks = []; // {w, h, center:[x,y], pixels:[[]..] images:[]}
+var sprites = {}; // name:{x, y, block, idx, count}
 
-var renderSprite = (id) => {
+function blockToImage (block, size, width) {
+  const image = new Image(size*block.w, size*block.h);
+  const cnvs = document.createElement('canvas');
+  cnvs.width = image.width;
+  cnvs.height = image.height;
+  Ok(cnvs.getContext('2d'))((ctx)=>block.pixels
+    .forEach((row,yy)=>row
+      .forEach((c,xx)=>(ctx.fillStyle=c) && ctx.fillRect(xx*size, yy*size, width, width))));
+  image.src = cnvs.toDataURL('image/png');
+  return image;
+}
+
+var renderSprite = (sprite) => {
+  sprite.constructor == String && (sprite=sprites[sprite]);
+  if (!sprite) { return; }
   const z = canvas.pixelSize;
   const zz = canvas.pixelWidth;
-  const s = sprites[id]
-  if (!s) { return; }
-  const {x,y,w,h,pixels,center} = s;
+  let {x,y,block,idx,count} = sprite;
+  block = blocks[block+idx%count];
   //const k=(mouse.x-x-center.x).abs()<4 && (mouse.y-y-center.y).abs()<4;
 
-  if (!s.image) {
-    s.image = new Image(w*z, h*z);
+  if (!block.image) { block.image = blockToImage(block, z, zz); }
 
-    const cnvs = document.createElement('canvas');
-    cnvs.width = s.image.width;
-    cnvs.height = s.image.height;
+  c2d.drawImage(block.image, x*z|0, y*z|0);
 
-    const ctx = cnvs.getContext('2d');
-    pixels[0]
-      .forEach((row,yy)=>row
-        .forEach((c,xx)=>(ctx.fillStyle=c) && ctx.fillRect(xx*z, yy*z, zz, zz)));
-
-    s.image.src = cnvs.toDataURL('image/png');
-  }
-
-  c2d.drawImage(s.image, x*z|0, y*z|0);
-
-  //pixels[0] // plot each pixel directly ++expensive;
+  //block.pixels // plot each pixel directly ++expensive;
   //  .forEach((row,yy)=>row
   //    .forEach((c,xx)=>c&&box(xx+x, yy+y, /*k||(xx==center.x&&yy==center.y)?'#fff':*/c)));
 }
 
-var renderSpriteMod = (id, actor) => {
-  const {x,y,pixels} = sprites[id];
+var renderSpriteMod = (sprite, actor) => {
   var i=0;
-  pixels[0]
+  const {x,y,block,idx,count} = sprite.constructor == String ? sprites[sprite] : sprite;
+  const pixels = blocks[block+idx%count].pixels;
+  pixels
     .forEach((row,yy)=>row
       .forEach((c,xx)=>c&&box(xx+x+(i+=.5).cos()*actor.exploding|0, yy+y+i.sin()*actor.exploding|0, c)));
   actor.exploding++;
 }
 
 var renderSprites = (ids) => {
-  (ids||keys(sprites)).forEach(renderSprite)
+  (ids||keys(sprites)).forEach(sprite=>{
+    renderSprite(sprite);
+  });
 }
 
-const makeSprite2 = (id, x, y, pixels, colors)=>{
+const makeSprite2 = (id, x, y, data, colors)=>{
   colors = Object.fromEntries([...colors.matchAll(/(.)(...) ?/g)].map(e=>e.slice(1)));
-  var w=0, h=0, xs=0, ys=0, ps=0;
-  pixels = pixels.map((pixels,i)=>pixels
-    .map((row,y)=>[...row]
-      .map((ch,x)=>(ps++,xs+=x,ys+=y,colors[ch]
-        ? ( h<y&&(h=y), w<x&&(w=x), '#'+colors[ch])
-        : undefined))));
-  return sprites[id] = {x, y, w:w+1, h:h+1, hidden:false, pixels, center:{x:xs/ps|0, y:ys/ps|0}};
+  const block=blocks.length;
+  data.forEach(frame=>{
+    var w=0, h=0, xs=0, ys=0, ps=0;
+    const pixels = frame
+      .map((row,y)=>[...row]
+        .map((ch,x)=>(colors[ch]
+          ? ( ps++, xs+=x, ys+=y, h<y&&(h=y), w<x&&(w=x), '#'+colors[ch])
+          : undefined)));
+    blocks.push({w:w+1, h:h+1, center:{x:xs/ps|0, y:ys/ps|0}, pixels, image:undefined});
+  });
+  return sprites[id] = {x, y, block, idx:0, count:blocks.length-block};
 }
 
 const makeSprite3 = (id, w, h, data)=>{
-  var xs=0, ys=0, ps=0;
-  pixels = [[...Array(h)].map((_,y)=>
+  var xs=0, ys=0, ps=0, block=blocks.length;
+  const pixels = [...Array(h)].map((_,y)=>
     [...Array(w)].map((_,x)=>{
       const r = data[(x+y*w)*4+0];
       const g = data[(x+y*w)*4+1];
       const b = data[(x+y*w)*4+2];
-      ps++; xs+=x;  ys+=y;
-      return !r && !g && !b
-        ? undefined
-        : '#' + r.toString(16).padStart(2,0) + g.toString(16).padStart(2,0) + b.toString(16).padStart(2,0);
-    }))];
-
-  return sprites[id] = {x:0, y:0, w, h, hidden:false, pixels, center:{x:xs/ps|0, y:ys/ps|0}};
+      return r || g || b
+        ? (ps++,  xs+=x,  ys+=y,
+          '#'+[r,g,b].map(b=>b.toString(16).padStart(2,0)).join(''))
+        : undefined;
+    }));
+  blocks.push({w, h, center:{x:xs/ps|0, y:ys/ps|0}, pixels, image:undefined});
+  return sprites[id] = {x:0, y:0, block, idx:0, count:1};
 }
 
-const makeSprite = (id, x, y, pixels, colors)=>{
+const makeSpriteDom = (id, x, y, pixels, colors)=>{
   colors = Object.fromEntries([...colors.matchAll(/(.)(...) ?/g)].map(e=>e.slice(1)));
 
   body.insertAdjacentHTML("afterbegin",
@@ -273,7 +304,7 @@ const makeSprite = (id, x, y, pixels, colors)=>{
 }
 
 async function rp1New (v=0) {
-  [makeSprite,makeSprite2][v]("rp1", 100, 45, [
+  makeSprite2("rp1", 100, 45, [
   ["**  *** *** **  * *   *** *   *** * * *** **     *    *",
    "* * *   * * * * * *   * * *   * * * * *   * *   **    *",
    "**  **  *** * *  *    *** *   ***  *  **  **     *    *",
@@ -283,7 +314,7 @@ async function rp1New (v=0) {
 }
 
 async function pbNew () {
-  const e = makeSprite("pb", 50, 50, [
+  const e = makeSpriteDom("pb", 50, 50, [
   [
    "  ############  ",
    " #************# ",
@@ -326,8 +357,8 @@ async function pbNew () {
   e.style.zIndex=1;
 }
 
-async function playerNew (s=0) {
-  [makeSprite,makeSprite2][s]("p1", 0, 50, [
+async function playerNew () {
+  makeSprite2("p1", 0, 50, [
   ["  **",
    " ****            ******* ",
    "r*****              rrrw ",
@@ -342,21 +373,31 @@ async function playerNew (s=0) {
    " *mm*****byr       ryyyrw",
    "y*mmmm*******wg    ryyyrwg",
    "  mmm*wg        ********w",
-   "                    rrrw ",
-   "                         "],
+   "                    rrrw "],
   ["  **",
    " ****                    ",
-   "w*****              rrrw ",
+   "o*****              rrrw ",
    " *mm*****byr    ********w",
-   "w*mmmm*******wg    ryyyrwg",
+   "o*mmmm*******wg    ryyyrwg",
    "  mmm*wg            rrrrw",
-   "                 ******w ",
-   "                         "]
-  ], '*888 ydd0 b00d rd00 md0d wddd g0d0');
+   "                 ******w "]
+  ], '*888 ydd0 o840 b00d rd00 md0d wddd g0d0');
+}
+async function nasiNew () {
+  makeSprite2("nasi", 0, 0, [
+  ["    rrrrrrrrrr       rr",
+   "  brrrwwwwwwwrrr    rr",
+   " bbrbwwkwkkkwwbrrrrrry",
+   "bbbbbwwkkkwwwwbbbrrooyy",
+   "bbbbbwwwwkkkwwbbbrrooyy",
+   " bbrbwwkkkwkwwbrrrrrry",
+   "  brrrwwwwwwwrrr    rr",
+   "    rrrrrrrrrr       rr"],
+  ], '*888 ydd0 oc60 b446 rd00 md0d wddd k333 g0d0');
 }
 
-async function trumpNew (s=0) {
-  const e = [makeSprite,makeSprite2][s](s?"trump":undefined, 50, 50,[
+async function trumpNew () {
+  const e = makeSprite2("trump", 50, 50,[
   ["         hhhhhhhhhh ",
    "      hhhhhhhhhhh   ",
    "    hhhhhhhhhhhhh   ",
@@ -372,13 +413,28 @@ async function trumpNew (s=0) {
    "      ...rr...      ",
    "       ......       ",
    "                    "],
+  ["         hhhhhhhhhh ",
+   "      hhhhhhhhhhh   ",
+   "    hhhhhhhhhhhhh   ",
+   "   hhhhhhhhhhhhh    ",
+   "   hhhhhhhhhhhhh    ",
+   "    h..........h    ",
+   "   ...((-..0))...   ",
+   "   ......nn......   ",
+   "    ....nnnn....    ",
+   "     .rr....rr.     ",
+   "     ..rrrrrr..     ",
+   "     ..........     ",
+   "      ........      ",
+   "       ......       ",
+   "                    "],
   ], '.ea2 (eee )eee -222 nd83 r800 weee hfe4');
   e.className = "alien";
   e.hidden = true;
 }
 
-async function ignignoktNew (s=0) {
-  const e = [makeSprite,makeSprite2][s](s?"ignignokt":undefined, 10, 10, [
+async function ignignoktNew () {
+  const e = makeSprite2("ignignokt", 10, 10, [
   ["      gg     ggg    ",
    "      ggg    ggg    ",
    "      ggg    ggg    ",
@@ -416,8 +472,8 @@ async function ignignoktNew (s=0) {
   e.hidden = true;
 }
 
-async function alienNew (s=0) {
-  const e = [makeSprite,makeSprite2][s](s?"alien":undefined, 50, 50,[
+async function alienNew () {
+  const e = makeSprite2("alien", 50, 50,[
   ["   yyy   ",
    "  gyyyg  ",
    " ggdggdg ",
@@ -441,148 +497,129 @@ async function alienNew (s=0) {
 
 var aliens=[];
 
-async function aliensNew (s=0) {
-  switch(s) {
-  case 0:
-    [...Array(4)].forEach(alienNew);
+async function aliensNew () {
+    alienNew();
     trumpNew();
-    [...Array(4)].forEach(alienNew);
     ignignoktNew();
-    break;
-  case 1:
-    alienNew(1);
-    trumpNew(1);
-    ignignoktNew(1);
-    ["rtypebottom.png", "nasi.png"].forEach(loadImageAsSprite);
+    nasiNew();
+    ["rtypebottom.png"].forEach(loadImageAsSprite);
     aliens[0] = [
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'}];
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'}];
     aliens[1] = [
-      {x:0, y:0, alive:true, sprite:'ignignokt'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'ignignokt'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'ignignokt'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'ignignokt'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'ignignokt'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'ignignokt'},
-      {x:0, y:0, alive:true, sprite:'alien'}];
+      {x:0, y:0, alive:true, idx:0, sprite:'ignignokt'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'ignignokt'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'ignignokt'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'ignignokt'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'ignignokt'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'ignignokt'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'}];
     aliens[2] = [
-      {x:0, y:0, alive:true, sprite:'trump'},
-      {x:0, y:0, alive:true, sprite:'nasi'},
-      {x:0, y:0, alive:true, sprite:'trump'},
-      {x:0, y:0, alive:true, sprite:'nasi'},
-      {x:0, y:0, alive:true, sprite:'trump'},
-      {x:0, y:0, alive:true, sprite:'nasi'},
-      {x:0, y:0, alive:true, sprite:'trump'},
-      {x:0, y:0, alive:true, sprite:'nasi'},
-      {x:0, y:0, alive:true, sprite:'trump'},
-      {x:0, y:0, alive:true, sprite:'nasi'},
-      {x:0, y:0, alive:true, sprite:'trump'},
-      {x:0, y:0, alive:true, sprite:'nasi'}];
+      {x:0, y:0, alive:true, idx:0, sprite:'trump'},
+      {x:0, y:0, alive:true, idx:0, sprite:'nasi'},
+      {x:0, y:0, alive:true, idx:0, sprite:'trump'},
+      {x:0, y:0, alive:true, idx:0, sprite:'nasi'},
+      {x:0, y:0, alive:true, idx:0, sprite:'trump'},
+      {x:0, y:0, alive:true, idx:0, sprite:'nasi'},
+      {x:0, y:0, alive:true, idx:0, sprite:'trump'},
+      {x:0, y:0, alive:true, idx:0, sprite:'nasi'},
+      {x:0, y:0, alive:true, idx:0, sprite:'trump'},
+      {x:0, y:0, alive:true, idx:0, sprite:'nasi'},
+      {x:0, y:0, alive:true, idx:0, sprite:'trump'},
+      {x:0, y:0, alive:true, idx:0, sprite:'nasi'}];
     aliens[3] = [
-      {x:0, y:0, alive:true, sprite:'trump'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'trump'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
 
-      {x:0, y:0, alive:true, sprite:'ignignokt'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'ignignokt'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
 
-      {x:0, y:0, alive:true, sprite:'nasi'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'},
-      {x:0, y:0, alive:true, sprite:'alien'}];
-    break;
-  }
+      {x:0, y:0, alive:true, idx:0, sprite:'nasi'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'},
+      {x:0, y:0, alive:true, idx:0, sprite:'alien'}];
 }
 
-async function missileNew (s=0) {
-  [makeSprite,makeSprite2][s]("m1", 100, 0, [
-  ["yyyyrr"],
+async function missileNew () {
+  makeSprite2("m1", 100, 0, [
+    ["yyyyrr"],
   ], "ydd0 rd00");
 }
 
 async function starsNew () {
   document.body.insertAdjacentHTML("afterbegin", `<div id="stars" style="position:unset">` +
     [...Array(10)].map((_,i)=>
-      `<p class="star" style="top:${100*Math.random()}%;left:${100*Math.random()}%;background-color:#eee">`)
+      `<p class="star" style="top:${rnd(100)}%;left:${rnd(100)}%;background-color:#eee">`)
     .join(''));
 }
 
 ////
 
-async function animateReadyMessage (state=0) {
-  var e;
-  switch (state) {
-  case 0:
-    e = $("#rp1");
-    if (0 < e.style.top.atof()) {
-      const x = e.style.left.atof();
-      e.style.left = x-2 + "%";
-      return e.style.left.atof() < -70; // return true to signal completion
-    }
-    break;
-  case 1:
-    e = sprites['rp1'];
-    if (0 < e.y) {
-      e.x -= 2;
-      return e.x < -70; // return true to signal completion
-    }
-    break;
-  }
+async function animateReadyMessage () {
+  var s = sprites['rp1'];
+  return 0<s.y && (s.x-=2) < -70; // return true to signal completion
 }
 
-var stars = [...Array(10)].map(_=>({x:100*Math.random(), y:100*Math.random()}));
+var stars = [...Array(10)].map(_=>({x:rnd(100), y:rnd(100)}));
+var touchdown, sstring=false, sstrings = [];
 
-async function animateStars (s=0) {
-  switch(s) {
-  case 0:
+function sstringNew () {
+  var y;
+  sstrings.push({
+    x:26, y:y=4+sprites['p1'].y, xi:1, yi:(50-y)*.01
+  });
+}
+
+async function animateSstring () {
+  (sstring || 2000<jiffies()-touchdown) && sstringNew();
+  sstrings.forEach(loc=>{
+    box(loc.x, loc.y, "#edc");
+    loc.x+=loc.xi;
+    loc.y+=loc.yi;
+    loc.i+=0.1;
+  });
+  sstrings = sstrings.filter(loc=>loc.x<100)
+}
+
+async function animateStars (og) {
+  switch(og) {
+  case 1:
     $$(".star").forEach(e=>{
-      const x = e.style.left.atof() - Math.sin(PI*e.style.top.atof()) - 1.2;
-      e.style.left = (x<0 ? (e.style.top=100*Math.random()+'%',100) : x) + "%"
+      const x = e.style.left.atof() - (PI*e.style.top.atof()).sin() - 1.2;
+      e.style.left = (x<0 ? (e.style.top=rnd(100)+'%',100) : x) + "%"
     });
     break;
-  case 1:
+  default:
     stars.forEach(({x,y},i)=>{
-      const t = x - Math.sin(PI*y) - 1.2;
-      stars[i].x = (x<0 ? (stars[i].y=100*Math.random(), 100) : t);
+      const t = x - (PI*y).sin() - 1.2;
+      stars[i].x = (x<0 ? (stars[i].y=rnd(100), 100) : t);
       box(stars[i].x|0, stars[i].y|0, "#ccf");
     });
-    break;
   }
 }
 
-async function animateMissile (s=0, m1=$("#m1"), v) {
-  switch(s) {
-  case 0:
-    if (0 < m1.style.top.atof()) {
-      m1.style.left = (v=m1.style.left.atof()+5)+"%";
-      100<v && (m1.style.top="0%");
-    }
-    break;
-  case 1:
-    if (0 < sprites['m1'].y) {
-      sprites['m1'].x = (v=sprites['m1'].x+5);
-      100<v && (sprites['m1'].y=0);
-    }
-    break;
-  }
+async function animateMissile () {
+  const s = sprites['m1'];
+  0<s.y && 100<(s.x += 5) && (s.y=0);
 }
 
 ////
@@ -590,136 +627,54 @@ async function animateMissile (s=0, m1=$("#m1"), v) {
 var kounter=0
 var level = 0
 
-async function animateAlien (s, e1, i) {
-  switch(s) {
-  case 0:
-    if (e1.styles) { return }
-    if (Math.random()<.1) {
-      let idx = e1.getAttribute("idx") | 0;
-      e1.children[idx].hidden = true;
-      idx = (idx+1) % e1.children.length;
-      e1.children[idx].hidden = false;
-      e1.setAttribute("idx", idx);
-    }
-
-    e1.style.left = 60+30*Math.cos((i*24+kounter)/40+level*3) + "%";
-    e1.style.top = 50+40*Math.sin((i*24+kounter)/(40-level*3)) + "%";
-    break;
-  case 1:
-    break;
-  }
-}
-
-var p1idx = 0;
-async function animateAliens (s=0) {
-  switch(s) {
-  case 0:
-    $$(".alien").forEach(animateAlien.bind(null, s))
-    if (++p1idx%8 == 0) {
-      e1 = $("#p1"); // animate player
-      let idx = e1.getAttribute("idx") | 0;
-      e1.children[idx].hidden = true;
-      idx = (idx+1) % e1.children.length;
-      e1.children[idx].hidden = false;
-      e1.setAttribute("idx", idx);
-    }
-    break;
-  case 1:
-    let allDead=true;
-    aliens[level%aliens.length].forEach((alien,i)=>{
-      if (alien.alive) {
-        const n = alien.sprite;
-        if (!alien.exploding) {
-          alien.x = sprites[n].x = 55+25*Math.cos((i*24+kounter)/40+level*3);
-          alien.y = sprites[n].y = 40+40*Math.sin((i*24+kounter)/(40-level*3));
-        } else {
-          sprites[n].x = alien.x;
-          sprites[n].y = alien.y;
-        }
-        alien.exploding
-          ? renderSpriteMod(n, alien)
-          : renderSprite(n);
-        if (50 < alien.exploding) {
-          alien.alive = false;
-        } else {
-          allDead=false;
-        }
+async function animateAliens () {
+  let allDead=true;
+  aliens[level%aliens.length].forEach((alien,i)=>{
+    if (alien.alive) {
+      const sprite = sprites[alien.sprite];
+      if (!alien.exploding) {
+        sprite.x = alien.x = 55+25*((i*24+kounter)/40+level*3).cos();
+        sprite.y = alien.y = 40+40*((i*24+kounter)/(40-level*3)).sin();
+        if (!rnd(32)) { alien.idx = ++alien.idx%sprite.count; }
+        sprite.idx = alien.idx;
+        renderSprite(sprite);
+      } else {
+        sprite.x = alien.x;
+        sprite.y = alien.y;
+        renderSpriteMod(sprite, alien);
       }
-    });
-    if (allDead) {
-      aliens[level%aliens.length].forEach(a=>{a.alive=true; a.exploding=0;});
-      ++level;
-      tune.next();
+      if (50 < alien.exploding) { alien.alive = false; } else { allDead=false; }
     }
-    break;
+  });
+  if (allDead) {
+    aliens[level%aliens.length].forEach(a=>{a.alive=true; a.exploding=0;});
+    ++level;
+    tune.next();
   }
 }
 
 ////
 
-async function collissions (s=0) {
+async function collissions () {
   let m1;
-  switch (s) {
-  case 0:
-  m1 = $("#m1");
-  $$(".alien").forEach((e1,i)=>{
-    const idx = e1.getAttribute("idx") || 0;
-    if (!e1.styles && (boom ||
-        (Math.abs(m1.offsetLeft-e1.offsetLeft) < 50
-         && Math.abs(m1.offsetTop-e1.offsetTop) < 50))) {
-      e1.styles = [...e1.children[idx].children].map(e=>e.style.cssText); // save pixel locations
+  m1=sprites['m1'];
+  aliens[level%aliens.length].forEach((alien,i)=>{
+    const target = sprites[alien.sprite];
+    const asc = blocks[target.block].center;
+    if (alien.alive && !alien.exploding && (boom || (5+m1.x-alien.x-asc.x).abs()<4 && (m1.y-alien.y-asc.y).abs()<4)) {
+      alien.exploding=1;
       soundExplode();
-      i == 0 && snd.play("primitive", .1);
-      i == 5 && snd.play("trump", .1);
+      snd.play(alien.sprite, .1);
     }
-  });
-  boom=0;
-  break;
-  case 1:
-    m1=sprites['m1'];
-    aliens[level%aliens.length].forEach((alien,i)=>{
-      const asc = sprites[alien.sprite].center;
-      if (alien.alive && !alien.exploding && (boom || (5+m1.x-alien.x-asc.x).abs()<4 && (m1.y-alien.y-asc.y).abs()<4)) {
+    sstrings.forEach(loc=>{
+      if (alien.alive && !alien.exploding && (boom || (5+loc.x-alien.x-asc.x).abs()<4 && (loc.y-alien.y-asc.y).abs()<4)) {
         alien.exploding=1;
         soundExplode();
         snd.play(alien.sprite, .1);
-      }
+      };
     });
-    boom=0;
-  break;
-  }
-}
-
-async function explode () {
-  const r=50;
-  let allDead=true;
-  $$(".alien").forEach((e1,i)=>{
-    let t, outside=false;
-    if (!e1.style.display) { allDead = false; }
-    if (e1.styles) {
-      allDead = false;
-      const idx = e1.getAttribute("idx") || 0;
-      [...e1.children[idx].children].forEach((e,i)=>{
-        e.style.left = (t=e.style.left.atof() + Math.cos(i))+"ch";
-        (t<-r || r<t) && (outside=true);
-        e.style.top = (t=e.style.top.atof() + Math.sin(i))+"ch";
-        (t<-r || r<t) && (outside=true);
-      })
-      if (outside) {
-        [...e1.children[idx].children].forEach((e,i)=>{
-          e.style = e1.styles[i];
-          e1.style.display="none";
-        });
-        e1.styles = undefined;
-      }
-    }
   });
-
-  if (allDead) {
-    $$(".alien").forEach((e)=>e.style.display=null);
-    ++level;
-    tune.next();
-  }
+  boom=0;
 }
 
 ////
@@ -735,7 +690,7 @@ var fps = ((last=jiffies(), workeds=[], durations=[])=>
     if (51 == durations.length) { workeds.shift(); durations.shift(); }
     const worked = workeds.reduce((a,b)=>a+b);
     const elapsed = durations.reduce((a,b)=>a+b);
-    tick(`${Math.round(durations.length*1000/elapsed)} ${Math.round(100*worked/elapsed)}%`);
+    db(`${Math.round(durations.length*1000/elapsed)} ${Math.round(100*worked/elapsed)}%`);
   }
 )();
 
@@ -750,17 +705,17 @@ function loadImageAsSprite (fn) {
     cnvs.height = img.height;
     const ctx = cnvs.getContext('2d');
     ctx.drawImage(img, 0, 0);
-    makeSprite3(fn.split('.')[0], img.width, img.height,
-        ctx.getImageData(0, 0, img.width, img.height).data);
+    makeSprite3(fn.split('.')[0], img.width, img.height, ctx.getImageData(0, 0, img.width, img.height).data);
   }
 }
 
 function renderBottom () {
   const s = sprites['rtypebottom'];
   if (!s) { return; }
-  const k = (kounter/8)%(s.w+0);
-  const r = s.w+0-k;
-  s.x=-k; s.y=100-(s.h+0);
+  const b = blocks[s.block];
+  const k = (kounter/8)%(b.w+0);
+  const r = b.w+0-k;
+  s.x=-k; s.y=100-(b.h+0);
   renderSprite('rtypebottom');
   if (r<100) {
     s.x=r;
@@ -769,7 +724,7 @@ function renderBottom () {
 
   c2d.transform(1,0,0,-1,0,0);
 
-  s.x=-k; s.y=-s.h;
+  s.x=-k; s.y=-b.h;
   renderSprite('rtypebottom');
   if (r<100) {
     s.x=r;
@@ -777,227 +732,16 @@ function renderBottom () {
   }
 
   c2d.transform(1,0,0,-1,0,0);
-}
-
-const clear = ()=>{
-  const w=body.clientWidth
-  const h=body.clientHeight;
-  if (canvas.bodyWidth!=w || canvas.bodyHeight != h) {
-    canvas.bodyWidth = w;
-    canvas.bodyHeight = h;
-    const s = max(min((w*.01|0)*100, (h*.01|0)*100), 100);
-    if (canvas.width != s) {
-      canvas.width = canvas.height = s;
-      canvas.pixelSize = s*.01|0;
-      canvas.pixelWidth = max(canvas.pixelSize-1, 1);
-    }
-  }
-  c2d.clearRect(0, 0, canvas.width, canvas.height);
-}
-
-const box = (x, y, c, s=canvas.pixelSize, w=canvas.pixelWidth)=>{
-  c2d.fillStyle = c;
-  c2d.fillRect(x*s, y*s, w, w);
 }
 
 ////
 
-var touchLastY, touchY;
-
-async function handlersGame () {
-
-  touchY = body.clientHeight/2;
-  const p1 = $("#p1");
-
-  body.addEventListener("touchstart", ()=>{
-    touchLastY = event.changedTouches.item(0).clientY;
-  });
-
-  const shipSlide = (delta) => {
-    touchY += delta;
-    touchY = touchY<0
-      ? 0
-      : body.clientHeight < touchY
-        ? body.clientHeight
-        : touchY;
-    p1.style.top = Math.floor(touchY/10) * 10 + "px";
-  }
-
-  body.addEventListener("touchmove", ()=>{
-    const y = event.changedTouches.item(0).clientY;
-    shipSlide(y-touchLastY);
-    touchLastY = y;
-  });
-
-  body.onmousemove = _=>{
-    p1.style.top=Math.floor(
-      (event.changedTouches?.item(0)||event).clientY/10
-    ) * 10 + "px";
-  };
-
-  const m1 = $("#m1");
-  const fire = _=>{
-    m1.style.top = p1.style.top;
-    m1.style.left = "5%";
-    event.preventDefault();
-    //event.stopPropagation();
-  };
-
-  body.onmousedown = fire;
-  body.addEventListener("touchend", fire);
-  body.onkeydown = ()=>{
-    switch (event.key) {
-    case "ArrowUp": shipSlide(-10); break;
-    case "ArrowDown": shipSlide(10); break;
-    case "Escape": case "Backspace": power=power?0:snd.wac.resume(),gameDomLoop(),snd.wac.suspend(),1; break;
-    case "*": boom=1;break;
-    default: fire(); break;
-    }
-  }
-}
-
-var boom=0;
 var power=1;
-var state=0;
-
-const gameStateMachine={
- 0: ()=>animateAliens()
-    .then(animateMissile)
-    .then(animateReadyMessage)
-    .then((isdone)=>(snd.wac.resume(), state=isdone?1:0)),
- 1: ()=>(
-    $$(".alien").forEach(e=>e.hidden=0),
-    $("#rp1").hidden=1,
-    state=2),
- 2: ()=>animateMissile(0)
-    .then(collissions)
-    .then(explode)
-    .then(animateAliens)
-};
-
-async function gameDomLoop (t) {
-  fps()
-  .then(animateStars)
-  .then(()=>kounter+=1.1)
-  .then(gameStateMachine[state])
-  //.then(()=>new Promise(r=>setTimeout(r,50)))
-  //.then(()=>{workEnd=jiffies(); power&&setTimeout(gameDomLoop, 0);})
-  .then(()=>(workEnd=jiffies(),power&&requestAnimationFrame(gameDomLoop)))
-  .catch(l)
-}
-
-const gameDom = async ()=>{
-  rp1New()
-  .then(playerNew)
-  .then(aliensNew)
-  .then(missileNew)
-  .then(starsNew)
-  .then(handlersGame)
-  .then(sfx)
-  .then(_=>requestIdleCallback(gameDomLoop))
-  .catch(l)
-}
-
-////
-
-//var mouse = {x:0, y:0};
-
-var gameCanvas = async () => {
-  switch (state) {
-  case 0:
-    body.onkeydown = ()=>{
-      switch (event.key) { case "Escape": case "Backspace": power=!power; break; }
-    }
-    await rp1New(1)
-      .then(()=>playerNew(1))
-      .then(()=>aliensNew(1))
-      .then(()=>missileNew(1));
-    body.addEventListener("touchstart", ()=>{
-      touchLastY = event.changedTouches.item(0).clientY;
-    });
-    var touchY = 50*10;
-    const shipSlide = (delta) => {
-      if (touchY===undefined) { touchY=sprites['p1'].y*10; return; }
-      touchY += delta;
-      touchY = touchY<0
-        ? 0
-        : 900 < touchY
-          ? 900
-          : touchY;
-        sprites['p1'].y = touchY/10|0 ;
-    }
-    body.addEventListener("touchmove", ()=>{
-      const y = event.changedTouches.item(0).clientY;
-      shipSlide(y-touchLastY);
-      touchLastY = y;
-    });
-    const fire = _=>{
-      sprites['m1'].y = sprites['p1'].y+4;
-      sprites['m1'].x = 5;
-      event.preventDefault();
-      //event.stopPropagation();
-    };
-    body.onmousedown = fire;
-    body.addEventListener("touchend", fire);
-    body.onkeydown = ()=>{
-      switch (event.key) {
-      case "ArrowUp": shipSlide(-10); break;
-      case "ArrowDown": shipSlide(10); break;
-      case "Escape": case "Backspace": power=power?0:snd.wac.resume(),gameCanvas(),snd.wac.suspend(),1; break;
-      case "*": boom=1;break;
-      default: fire(); break;
-      }
-    }
-/*
-    canvas.onmousemove = _=>{
-      s = Math.min( (canvas.clientWidth/100)|0, (canvas.clientHeight/100)|0 );
-      mouse.x = event.x/s|0;
-      mouse.y = event.y/s|0;
-    };
-*/
-    body.onmousemove = _=>{
-      sprites['p1'].y=(100*
-        (event.changedTouches?.item(0)||event).clientY
-      /body.clientHeight).floor();
-    };
-    state=1;
-    gameCanvas();
-    sfx()
-    break;
-  case 1:
-    fps()
-    .then(clear)
-    .then(()=>kounter+=19.1)
-    .then(()=>animateMissile(1))
-    .then(()=>animateStars(1))
-    .then(renderBottom)
-    .then(()=>renderSprites(['m1','p1','rp1']))
-    .then(()=>animateReadyMessage(1))
-    .then((isdone)=>(snd.wac.resume(), isdone&&(state=2)))
-    .then(()=>(workEnd=jiffies(), power&&requestAnimationFrame(gameCanvas)))
-    break;
-  case 2:
-    fps()
-    .then(clear)
-    .then(()=>kounter+=1.1)
-    .then(()=>animateStars(1))
-    .then(renderBottom)
-    .then(()=>animateMissile(1))
-    .then(()=>collissions(1))
-    .then(()=>animateAliens(1))
-    .then(()=>renderSprites(['m1','p1']))
-    .then(()=>(workEnd=jiffies(), power&&requestAnimationFrame(gameCanvas)))
-    break;
-  }
-}
-
-////
-
 let isPlaying=0, song;
 
 async function jukebox (t) {
   fps()
-  .then(animateStars)
+  .then(animateStars.bind(0, 1))
   .then(()=>{
     isPlaying ||= snd.notes(song, ()=>isPlaying=0);
     requestAnimationFrame(jukebox);
@@ -1024,6 +768,8 @@ const jukeboxStart = async()=> {
 
 ////
 
+var state=0;
+
 async function gameCabinet () {
   switch (state) { case 0:
     body.insertAdjacentHTML("afterbegin", '<img src="pongCabinetTop.png">');
@@ -1039,8 +785,10 @@ async function gameCabinet () {
     //clear();
     [...Array(100)].forEach(_=>
       box(rnd(100),
-      rnd(100),
-      '#'+('00'+(Math.random()*16*16*16).toFixed()).slice(-3), 1, 2));
+        rnd(100),
+        '#'+('00'+rnd(16*16*16).toString(16)).slice(-3),
+        1, 2)
+    );
     [...Array(20)].forEach((_,i)=>box(
       50+(kounter+i*.17).cos()*50,
       50+50*(kounter*.9+i*.19).sin(),
@@ -1051,8 +799,116 @@ async function gameCabinet () {
 
 ////
 
+var touchLastY, touchY;
+var boom=0;
+//var mouse = {x:0, y:0};
+
+var gameCanvas = async () => {
+  switch (state) {
+  case 0:
+    await rp1New(1)
+      .then(playerNew)
+      .then(aliensNew)
+      .then(missileNew);
+
+    body.onkeydown = ()=>{
+      switch (event.key) { case "Escape": case "Backspace": power=!power; break; }
+    }
+    body.addEventListener("touchstart", ()=>{
+      touchdown = jiffies();
+      touchLastY = event.changedTouches.item(0).clientY;
+    });
+    var touchY = 50*10;
+    const shipSlide = (delta) => {
+      if (touchY===undefined) { touchY=sprites['p1'].y*10; return; }
+      touchY += delta;
+      touchY = touchY<0
+        ? 0
+        : 900 < touchY
+          ? 900
+          : touchY;
+        sprites['p1'].y = touchY/10|0 ;
+    }
+    body.addEventListener("touchmove", ()=>{
+      const y = event.changedTouches.item(0).clientY;
+      shipSlide(y-touchLastY);
+      touchLastY = y;
+    });
+    const fire = _=>{
+      touchdown = undefined;
+      sprites['m1'].y = sprites['p1'].y+4;
+      sprites['m1'].x = 5;
+      event.preventDefault();
+      //event.stopPropagation();
+    };
+    body.onmousedown = fire;
+    body.addEventListener("touchend", fire);
+    body.onkeydown = ()=>{
+      switch (event.key) {
+      case "ArrowUp": shipSlide(-10); break;
+      case "ArrowDown": shipSlide(10); break;
+      case "Escape": case "Backspace": power=power?0:snd.wac.resume(),gameCanvas(),snd.wac.suspend(),1; break;
+      case "*": boom=1; break;
+      case "s": sstring=true; break;
+      default: fire(); break;
+      }
+    }
+    body.onkeyup = ()=>{
+      switch (event.key) {
+      case "s": sstring=false; break;
+      }
+    }
+/*
+    canvas.onmousemove = _=>{
+      s = Math.min( (canvas.clientWidth/100)|0, (canvas.clientHeight/100)|0 );
+      mouse.x = event.x/s|0;
+      mouse.y = event.y/s|0;
+    };
+*/
+    body.onmousemove = _=>{
+      sprites['p1'].y=(100*
+        (event.changedTouches?.item(0)||event).clientY
+      /body.clientHeight).floor();
+    };
+    state=1;
+    gameCanvas();
+    sfx()
+    break;
+  case 1:
+    fps()
+    .then(clear)
+    .then(()=>kounter+=19)
+    .then(animateMissile)
+    .then(animateStars)
+    .then(animateSstring)
+    .then(renderBottom)
+    .then((sprite)=>kounter%4||((sprite=sprites['p1']).idx = ++sprite.idx%sprite.count))
+    .then(()=>renderSprites(['m1','p1','rp1']))
+    .then(animateReadyMessage)
+    .then((isdone)=>(snd.wac.resume(), isdone&&(state=2)))
+    .then(()=>(workEnd=jiffies(), power&&requestAnimationFrame(gameCanvas)))
+    break;
+  case 2:
+    fps()
+    .then(clear)
+    .then(()=>kounter+=1)
+    .then(animateStars)
+    .then(animateSstring)
+    .then(renderBottom)
+    .then(animateMissile)
+    .then(collissions)
+    .then(animateAliens)
+    .then((sprite)=>kounter%4||((sprite=sprites['p1']).idx = ++sprite.idx%sprite.count))
+    .then(()=>renderSprites(['m1','p1']))
+    .then(()=>(workEnd=jiffies(), power&&requestAnimationFrame(gameCanvas)))
+    break;
+  }
+}
+
+////
+
 Ok(decodeURI(location.search).slice(1))
 ((queryString)=>(
-  {'1':gameCabinet, '2':gameDom, '':gameCanvas}[(song=queryString)]||jukeboxStart)())
+  {'1':gameCabinet, '':gameCanvas}[(song=queryString)]||jukeboxStart)())
 
 </script></body></html>
