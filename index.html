@@ -22,13 +22,14 @@ Number.prototype.frac= function(){return this.abs()%1;}
 Number.prototype.mod = function (d){return this-d*(this/d).floor();}
 Number.prototype.cos = function(){return Math.cos(this);}
 Number.prototype.sin = function(){return Math.sin(this);}
+Number.prototype.min = function(n){return Math.min(this,n);}
+Number.prototype.max = function(n){return Math.max(this,n);}
 const jiffies=Date.now;
 const rnd=(m,s=0)=>(m*Math.random()+s)|0;
-const min=Math.min.bind(Math);
-const max=Math.max.bind(Math);
 const l=(v)=>(console.log(v),v);
-const Ok = (o, self=(f)=>(o=f(o)||o, self))=>(self(_=>{self.unwrap=_=>o})) // Monadical framework
+const Ok = (o, self=(f)=>(o=f(o)||o, self))=>self(_=>{self.unwrap=_=>o}) // Monadical framework
 const exit = (msg="the end")=>{throw msg}
+const call = f=>l(f)&&f();
 
 const body = $("body");
 const canvas = $('canvas');
@@ -40,29 +41,6 @@ function db (v, el) {
   body.insertAdjacentHTML("beforeend", `<p id=db style="width:100%">0`);
   el=$("#db");
   (db = (v)=>el.innerText=v||el.innerText.atoi()+1)(v);
-}
-
-////
-
-const clear = ()=>{
-  const w=body.clientWidth
-  const h=body.clientHeight;
-  if (canvas.bodyWidth!=w || canvas.bodyHeight != h) {
-    canvas.bodyWidth = w;
-    canvas.bodyHeight = h;
-    const s = max(min((w*.01|0)*100, (h*.01|0)*100), 100);
-    if (canvas.width != s) {
-      canvas.width = canvas.height = s;
-      canvas.pixelSize = s*.01|0;
-      canvas.pixelWidth = max(canvas.pixelSize-1, 1);
-    }
-  }
-  c2d.clearRect(0, 0, canvas.width, canvas.height);
-}
-
-const box = (x, y, c, s=canvas.pixelSize, w=canvas.pixelWidth)=>{
-  c2d.fillStyle = c;
-  c2d.fillRect(x*s, y*s, w, w);
 }
 
 ////
@@ -207,37 +185,62 @@ const tune = function* () {
 
 ////
 
+const clear = ()=>{
+  const w=body.clientWidth
+  const h=body.clientHeight;
+  if (canvas.bodyWidth!=w || canvas.bodyHeight != h) {
+    canvas.bodyWidth = w;
+    canvas.bodyHeight = h;
+    const s = ((w*.01|0)*100).min((h*.01|0)*100).max(100);
+    if (canvas.width != s) {
+      canvas.width = canvas.height = s;
+      canvas.pixelSize = s*.01|0;
+      canvas.pixelWidth = 1..max(canvas.pixelSize-1);
+    }
+  }
+  c2d.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+const box = (x, y, c, s=canvas.pixelSize, w=canvas.pixelWidth)=>{
+  c2d.fillStyle = c;
+  c2d.fillRect(x*s, y*s, w, w);
+}
+
+////
+
 var blocks = []; // {w, h, center:[x,y], pixels:[[]..] images:[]}
 var sprites = {}; // name:{x, y, block, idx, count}
 
 function blockToImage (block, size, width) {
-  const image = new Image(size*block.w, size*block.h);
   const cnvs = document.createElement('canvas');
-  cnvs.width = image.width;
-  cnvs.height = image.height;
-  Ok(cnvs.getContext('2d'))((ctx)=>block.pixels
+  cnvs.width = size*block.w;
+  cnvs.height = size*block.h;
+  const ctx = cnvs.getContext('2d');
+  block.pixels
     .forEach((row,yy)=>row
-      .forEach((c,xx)=>(ctx.fillStyle=c) && ctx.fillRect(xx*size, yy*size, width, width))));
-  image.src = cnvs.toDataURL('image/png');
-  return image;
+      .forEach((c,xx)=>(ctx.fillStyle=c) && ctx.fillRect(xx*size, yy*size, width, width)));
+  return createImageBitmap(cnvs, 0, 0, cnvs.width, cnvs.height);
 }
 
 var renderSprite = (sprite) => {
-  sprite.constructor == String && (sprite=sprites[sprite]);
+  String==sprite.constructor && (sprite=sprites[sprite]);
   if (!sprite) { return; }
   const z = canvas.pixelSize;
   const zz = canvas.pixelWidth;
   let {x,y,block,idx,count} = sprite;
   block = blocks[block+idx%count];
   //const k=(mouse.x-x-center.x).abs()<4 && (mouse.y-y-center.y).abs()<4;
-
-  if (!block.image) { block.image = blockToImage(block, z, zz); }
-
-  c2d.drawImage(block.image, x*z|0, y*z|0);
-
-  //block.pixels // plot each pixel directly ++expensive;
-  //  .forEach((row,yy)=>row
-  //    .forEach((c,xx)=>c&&box(xx+x, yy+y, /*k||(xx==center.x&&yy==center.y)?'#fff':*/c)));
+  if (block.image) {
+    block.image ? c2d.drawImage(block.image, x*z|0, y*z|0) : l('skipping');
+  } else {
+    if (block.image === undefined) {
+      block.image = false;
+      blockToImage(block, z, zz).then(o=>block.image=o);
+    }
+    block.pixels // plot each pixel directly
+      .forEach((row,yy)=>row
+        .forEach((c,xx)=>c&&box(xx+x, yy+y, /*k||(xx==center.x&&yy==center.y)?'#fff':*/c)));
+  }
 }
 
 var renderSpriteMod = (sprite, actor) => {
@@ -251,12 +254,10 @@ var renderSpriteMod = (sprite, actor) => {
 }
 
 var renderSprites = (ids) => {
-  (ids||keys(sprites)).forEach(sprite=>{
-    renderSprite(sprite);
-  });
+  (ids||l(Object.values(sprites))).forEach(renderSprite);
 }
 
-const makeSprite2 = (id, x, y, data, colors)=>{
+const makeSprite = (id, data, colors)=>{
   colors = Object.fromEntries([...colors.matchAll(/(.)(...) ?/g)].map(e=>e.slice(1)));
   const block=blocks.length;
   data.forEach(frame=>{
@@ -268,30 +269,39 @@ const makeSprite2 = (id, x, y, data, colors)=>{
           : undefined)));
     blocks.push({w:w+1, h:h+1, center:{x:xs/ps|0, y:ys/ps|0}, pixels, image:undefined});
   });
-  return sprites[id] = {x, y, block, idx:0, count:blocks.length-block};
+  return sprites[id] = {x:50, y:50, block, idx:0, count:blocks.length-block};
 }
 
-const makeSprite3 = (id, w, h, data)=>{
-  var xs=0, ys=0, ps=0, block=blocks.length;
-  const pixels = [...Array(h)].map((_,y)=>
-    [...Array(w)].map((_,x)=>{
-      const r = data[(x+y*w)*4+0];
-      const g = data[(x+y*w)*4+1];
-      const b = data[(x+y*w)*4+2];
-      return r || g || b
-        ? (ps++,  xs+=x,  ys+=y,
-          '#'+[r,g,b].map(b=>b.toString(16).padStart(2,0)).join(''))
-        : undefined;
-    }));
-  blocks.push({w, h, center:{x:xs/ps|0, y:ys/ps|0}, pixels, image:undefined});
-  return sprites[id] = {x:0, y:0, block, idx:0, count:1};
+const makeSprite3 = (url)=>{
+  const img = new Image();
+  img.src=url;
+  img.onload = _=>{
+    const cnvs = document.createElement('canvas');
+    const w = cnvs.width = img.width;
+    const h = cnvs.height = img.height;
+    const ctx = cnvs.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const bytes = ctx.getImageData(0, 0, w, h).data;
+    var xs=0, ys=0, ps=0;
+    const pixels = [...Array(h)].map((_,y)=>
+      [...Array(w)].map((_,x)=>{
+        const rgb=[...bytes.slice((x+y*w)*4, (x+y*w)*4+3)]
+          .map(b=>b.toString(16).padStart(2,0))
+          .join('');
+        return rgb!="000000"
+          ? (ps++,  xs+=x,  ys+=y, '#'+rgb)
+          : undefined;
+      }));
+    blocks.push({w, h, center:{x:xs/ps|0, y:ys/ps|0}, pixels, image:undefined});
+    sprites[url.split('.')[0]] = {x:0, y:0, block:blocks.length-1, idx:0, count:1};
+  }
 }
 
-const makeSpriteDom = (id, x, y, pixels, colors)=>{
+const makeSpriteDom = (id, pixels, colors)=>{
   colors = Object.fromEntries([...colors.matchAll(/(.)(...) ?/g)].map(e=>e.slice(1)));
 
   body.insertAdjacentHTML("afterbegin",
-  `<div ${id?"id="+id:""} style="top:${y}%;left:${x}%">`
+  `<div ${id?"id="+id:""} style="top:50%;left:50%">`
   + pixels.map((pixels,i)=>
       `<div ${i?"hidden":""}>${
         pixels.flatMap((row,y)=>[...row].map((ch,x)=>
@@ -304,7 +314,7 @@ const makeSpriteDom = (id, x, y, pixels, colors)=>{
 }
 
 async function rp1New (v=0) {
-  makeSprite2("rp1", 100, 45, [
+  return makeSprite("rp1", [
   ["**  *** *** **  * *   *** *   *** * * *** **     *    *",
    "* * *   * * * * * *   * * *   * * * * *   * *   **    *",
    "**  **  *** * *  *    *** *   ***  *  **  **     *    *",
@@ -314,7 +324,7 @@ async function rp1New (v=0) {
 }
 
 async function pbNew () {
-  const e = makeSpriteDom("pb", 50, 50, [
+  const e = makeSpriteDom("pb", [
   [
    "  ############  ",
    " #************# ",
@@ -358,7 +368,7 @@ async function pbNew () {
 }
 
 async function playerNew () {
-  makeSprite2("p1", 0, 50, [
+  return makeSprite("p1", [
   ["  **",
    " ****            ******* ",
    "r*****              rrrw ",
@@ -384,7 +394,7 @@ async function playerNew () {
   ], '*888 ydd0 o840 b00d rd00 md0d wddd g0d0');
 }
 async function nasiNew () {
-  makeSprite2("nasi", 0, 0, [
+  makeSprite("nasi", [
   ["    rrrrrrrrrr       rr",
    "  brrrwwwwwwwrrr    rr",
    " bbrbwwkwkkkwwbrrrrrry",
@@ -397,7 +407,7 @@ async function nasiNew () {
 }
 
 async function trumpNew () {
-  const e = makeSprite2("trump", 50, 50,[
+  const e = makeSprite("trump", [
   ["         hhhhhhhhhh ",
    "      hhhhhhhhhhh   ",
    "    hhhhhhhhhhhhh   ",
@@ -434,46 +444,46 @@ async function trumpNew () {
 }
 
 async function ignignoktNew () {
-  const e = makeSprite2("ignignokt", 10, 10, [
-  ["      gg     ggg    ",
-   "      ggg    ggg    ",
-   "      ggg    ggg    ",
-   "    ggggg  ggggg    ",
-   "    gggggggggggg    ",
-   "    gggbggggbggg    ",
-   "    ggbggggggbgg    ",
-   "    gbgbbggbbgbg    ",
-   "    gggggggggggg    ",
-   "    gggggggggggggb  ",
-   "  bgggggbbbbggggg b ",
-   " b gggggggggggggg  b",
-   "b  gggggggggggggg  b",
-   "        b  b         ",
-   "        b  b         ",
-   "      bbb  bbb       "],
-  ["      gg     ggg    ",
-   "      ggg    ggg    ",
-   "      ggg    ggg    ",
-   "    ggggg  ggggg    ",
-   "    gggggggggggg    ",
-   "    gggbggggbggg    ",
-   "    ggbggggggbgg   b",
-   "    gbgbbggbbgbg   b",
-   "b   gggggggggggg  b ",
-   " b  gggggggggggggb  ",
-   "  bgggggbbbbggggg   ",
-   "   gggggggggggggg   ",
-   "   gggggggggggggg   ",
-   "        b  b         ",
-   "        b  b         ",
-   "      bbb  bbb       "]
+  const e = makeSprite("ignignokt", [
+  ["      gg    ggg    ",
+   "      ggg   ggg    ",
+   "      ggg   ggg    ",
+   "    ggggg ggggg    ",
+   "    ggggggggggg    ",
+   "    gggbgggbggg    ",
+   "    ggbgggggbgg    ",
+   "    gbgbbgbbgbg    ",
+   "    ggggggggggg    ",
+   "    ggggggggggggb  ",
+   "  bggggbbbbbgggg b ",
+   " b ggggggggggggg  b",
+   "b  ggggggggggggg  b",
+   "        b b         ",
+   "        b b         ",
+   "      bbb bbb       "],
+  ["      gg    ggg    ",
+   "      ggg   ggg    ",
+   "      ggg   ggg    ",
+   "    ggggg ggggg    ",
+   "    ggggggggggg    ",
+   "    gggbgggbggg    ",
+   "    ggbgggggbgg   b",
+   "    gbgbbgbbgbg   b",
+   "b   ggggggggggg  b ",
+   " b  ggggggggggggb  ",
+   "  bggggbbbbbgggg   ",
+   "   ggggggggggggg   ",
+   "   ggggggggggggg   ",
+   "        b b         ",
+   "        b b         ",
+   "      bbb bbb       "]
   ], 'b00d g0d0');
   e.className = "alien";
   e.hidden = true;
 }
 
 async function alienNew () {
-  const e = makeSprite2("alien", 50, 50,[
+  const e = makeSprite("alien", [
   ["   yyy   ",
    "  gyyyg  ",
    " ggdggdg ",
@@ -502,7 +512,7 @@ async function aliensNew () {
     trumpNew();
     ignignoktNew();
     nasiNew();
-    ["rtypebottom.png"].forEach(loadImageAsSprite);
+    ["rtypebottom.png"].forEach(makeSprite3);
     aliens[0] = [
       {x:0, y:0, alive:true, idx:0, sprite:'alien'},
       {x:0, y:0, alive:true, idx:0, sprite:'alien'},
@@ -560,7 +570,7 @@ async function aliensNew () {
 }
 
 async function missileNew () {
-  makeSprite2("m1", 100, 0, [
+  makeSprite("m1", [
     ["yyyyrr"],
   ], "ydd0 rd00");
 }
@@ -696,55 +706,41 @@ var fps = ((last=jiffies(), workeds=[], durations=[])=>
 
 ///////
 
-function loadImageAsSprite (fn) {
-  const img = new Image();
-  img.src=fn;
-  img.onload = r=>{
-    const cnvs = document.createElement('canvas');
-    cnvs.width = img.width;
-    cnvs.height = img.height;
-    const ctx = cnvs.getContext('2d');
-    ctx.drawImage(img, 0, 0);
-    makeSprite3(fn.split('.')[0], img.width, img.height, ctx.getImageData(0, 0, img.width, img.height).data);
-  }
-}
-
 function renderBottom () {
   const s = sprites['rtypebottom'];
   if (!s) { return; }
   const b = blocks[s.block];
-  const k = (kounter/8)%(b.w+0);
-  const r = b.w+0-k;
-  s.x=-k; s.y=100-(b.h+0);
-  renderSprite('rtypebottom');
+  const k = kounter/8%b.w;
+  const r = b.w-k;
+  s.x=-k; s.y=100-b.h;
+  renderSprite(s);
   if (r<100) {
     s.x=r;
-    renderSprite('rtypebottom');
+    renderSprite(s);
   }
-
   c2d.transform(1,0,0,-1,0,0);
 
   s.x=-k; s.y=-b.h;
-  renderSprite('rtypebottom');
+  renderSprite(s);
   if (r<100) {
     s.x=r;
-    renderSprite('rtypebottom');
+    renderSprite(s);
   }
 
-  c2d.transform(1,0,0,-1,0,0);
+  c2d.setTransform(1,0,0,1,0,0);
 }
 
 ////
 
 var power=1;
-let isPlaying=0, song;
+let isPlaying=0;
 
-async function jukebox (t) {
+async function jukebox (song) {
   fps()
   .then(animateStars.bind(0, 1))
   .then(()=>{
     isPlaying ||= snd.notes(song, ()=>isPlaying=0);
-    requestAnimationFrame(jukebox);
+    requestAnimationFrame(_=>jukebox(song));
     workEnd = jiffies();
   })
   .catch(l)
@@ -758,11 +754,11 @@ async function handlersJukebox () {
   };
 }
 
-const jukeboxStart = async()=> {
+const jukeboxStart = async(song)=> {
   starsNew()
   .then(pbNew)
   .then(handlersJukebox)
-  .then(jukebox)
+  .then(_=>jukebox(song))
   .catch(l);
 };
 
@@ -806,11 +802,6 @@ var boom=0;
 var gameCanvas = async () => {
   switch (state) {
   case 0:
-    await rp1New(1)
-      .then(playerNew)
-      .then(aliensNew)
-      .then(missileNew);
-
     body.onkeydown = ()=>{
       switch (event.key) { case "Escape": case "Backspace": power=!power; break; }
     }
@@ -867,25 +858,29 @@ var gameCanvas = async () => {
 */
     body.onmousemove = _=>{
       sprites['p1'].y=(100*
-        (event.changedTouches?.item(0)||event).clientY
-      /body.clientHeight).floor();
+        (event.changedTouches?.item(0)||event).clientY/body.clientHeight).floor();
     };
-    state=1;
-    gameCanvas();
-    sfx()
+    rp1New(1).then(s=>{s.y=50; s.x=100;})
+      .then(playerNew).then(s=>s.x=0)
+      .then(aliensNew)
+      .then(missileNew)
+      .then(sfx)
+      .then(_=>state=1)
+      .then(gameCanvas);
     break;
   case 1:
     fps()
     .then(clear)
     .then(()=>kounter+=19)
-    .then(animateMissile)
     .then(animateStars)
     .then(animateSstring)
     .then(renderBottom)
+    .then(animateMissile)
+    .then(_=>sprites['m1'].x<20&&(state=2))
     .then((sprite)=>kounter%4||((sprite=sprites['p1']).idx = ++sprite.idx%sprite.count))
     .then(()=>renderSprites(['m1','p1','rp1']))
     .then(animateReadyMessage)
-    .then((isdone)=>(snd.wac.resume(), isdone&&(state=2)))
+    .then((isdone)=>(isdone&&(state=2)))
     .then(()=>(workEnd=jiffies(), power&&requestAnimationFrame(gameCanvas)))
     break;
   case 2:
@@ -906,9 +901,11 @@ var gameCanvas = async () => {
 }
 
 ////
+const slice = i=>o=>o.slice(i);
 
-Ok(decodeURI(location.search).slice(1))
-((queryString)=>(
-  {'1':gameCabinet, '':gameCanvas}[(song=queryString)]||jukeboxStart)())
+Ok(location.search)
+ (decodeURI)
+ (slice(1))
+ (s=>({1:gameCabinet, '':gameCanvas}[s]||jukeboxStart)(s))
 
 </script></body></html>
